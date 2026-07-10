@@ -1,0 +1,22 @@
+FAIL src/auth/login.test.ts
+  ● login › rejects missing MFA
+
+    expect(received).toBe(false)
+
+    Expected: false
+    Received: true
+
+      22 |   it('rejects missing MFA', () => {
+    > 23 |     expect(login(user)).toBe(false);
+         |                         ^
+      24 |   });
+
+      at Object.<anonymous> (src/auth/login.test.ts:23:25)
+
+PASS src/http/client.test.ts
+
+Test Suites: 1 failed, 1 passed, 2 total
+Tests:       1 failed, 5 passed, 6 total
+Snapshots:   0 total
+Time:        1.8 s
+Ran all test suites.

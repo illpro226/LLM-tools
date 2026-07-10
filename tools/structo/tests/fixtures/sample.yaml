@@ -1,0 +1,10 @@
+server:
+  host: localhost
+  port: 8080
+features:
+  - name: alpha
+    enabled: true
+  - name: beta
+    enabled: false
+    flag: 3
+replicas: 2

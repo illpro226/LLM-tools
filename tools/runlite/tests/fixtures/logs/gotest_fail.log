@@ -1,0 +1,11 @@
+=== RUN   TestLoginMFA
+--- FAIL: TestLoginMFA (0.00s)
+    auth_test.go:24: expected login to fail without MFA, got success
+=== RUN   TestRetryCount
+--- FAIL: TestRetryCount (0.01s)
+    client_test.go:41: retries = 3, want 5
+=== RUN   TestTimeout
+--- PASS: TestTimeout (0.00s)
+FAIL
+FAIL	example.com/pkg/auth	0.020s
+ok  	example.com/pkg/http	0.011s

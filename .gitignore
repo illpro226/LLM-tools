@@ -1,0 +1,13 @@
+# Generated state — rebuildable, never committed (AGENTS.md)
+.repoindex/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+.coverage
+
+# Machine-local Claude Code settings (shared settings.json IS committed)
+.claude/settings.local.json

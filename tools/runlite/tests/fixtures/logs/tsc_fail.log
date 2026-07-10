@@ -1,0 +1,2 @@
+src/auth/login.ts(24,5): error TS2322: Type 'string' is not assignable to type 'boolean'.
+src/http/client.ts(41,11): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.

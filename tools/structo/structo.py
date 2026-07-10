@@ -1,0 +1,818 @@
+#!/usr/bin/env python3
+"""structo — schema and shape of a data file instead of its content.
+
+    structo FILE              summarize (format auto-detected)
+    structo FILE --path a.b[0].c   zoom into a JSON/YAML subtree
+    structo FILE --sample N   elements aggregated per array (default 10)
+    structo FILE --max-tokens N    cap output (bytes/4), degrading:
+                              drop samples/examples -> collapse deep
+                              nesting and distribution detail ->
+                              top-level structure only (never dropped)
+
+Formats: JSON, JSONL, YAML (needs PyYAML), CSV, TSV, XML, generic log.
+Detection is by extension, else content sniffing; the header states which.
+
+Everything is streamed — memory is O(schema + samples), never O(file):
+JSON via an incremental event tokenizer, JSONL per record, YAML via the
+PyYAML event API, CSV/logs per row/line, XML via iterparse with
+element clearing. Figures affected by sampling carry a `~` marker;
+clean figures are exact (see DECISIONS.md ADR-003 — sampling is
+first-N, deterministic).
+"""
+
+import argparse
+import csv
+import json
+import os
+import re
+import sys
+
+__version__ = "0.1.0"
+
+DEFAULT_SAMPLE = 10
+EXAMPLES_PER_NODE = 2
+EXAMPLE_CAP = 24
+DISTINCT_CAP = 256
+SAMPLE_ROWS = 3
+TOP_TEMPLATES = 5
+TEMPLATE_CAP = 512
+
+EXT_FORMATS = {".json": "json", ".jsonl": "jsonl", ".ndjson": "jsonl",
+               ".yaml": "yaml", ".yml": "yaml", ".csv": "csv",
+               ".tsv": "tsv", ".xml": "xml", ".log": "log"}
+
+
+class StructoError(Exception):
+    pass
+
+
+def _est(lines):
+    return sum(len(l.encode("utf-8", "replace")) + 1 for l in lines) // 4
+
+
+def fit(levels, budget):
+    """First (most detailed) level within budget, else the last."""
+    lines = levels[0]()
+    if not budget or _est(lines) <= budget:
+        return lines
+    for level in levels[1:]:
+        lines = level()
+        if _est(lines) <= budget:
+            return lines
+    return lines
+
+
+# ------------------------------------------------------- json event stream
+# Events: ("{",) ("}",) ("[",) ("]",) ("key", text) ("scalar", type, text)
+
+def json_events(fh):
+    stack = []
+    expect_key = False
+    mode = 0          # 0 normal, 1 string, 2 number/literal
+    esc = False
+    sbuf, slen = [], 0
+    abuf = []
+    out = []
+
+    def end_container(tok):
+        nonlocal expect_key
+        if stack:
+            stack.pop()
+        out.append((tok,))
+        if stack and stack[-1] == "o":
+            expect_key = True
+
+    def end_atom():
+        nonlocal mode, expect_key
+        text = "".join(abuf)
+        abuf.clear()
+        mode = 0
+        if text in ("true", "false"):
+            kind = "bool"
+        elif text == "null":
+            kind = "null"
+        elif any(c in text for c in ".eE"):
+            kind = "float"
+        else:
+            kind = "int"
+        out.append(("scalar", kind, text))
+        if stack and stack[-1] == "o":
+            expect_key = True
+
+    def normal(ch):
+        nonlocal mode, expect_key, slen
+        if ch == '"':
+            mode = 1
+            sbuf.clear()
+            slen = 0
+        elif ch == "{":
+            out.append(("{",))
+            stack.append("o")
+            expect_key = True
+        elif ch == "}":
+            end_container("}")
+        elif ch == "[":
+            out.append(("[",))
+            stack.append("a")
+        elif ch == "]":
+            end_container("]")
+        elif ch in "-0123456789tfn":
+            mode = 2
+            abuf.append(ch)
+        # whitespace, ',' and ':' are structure we do not need
+
+    while True:
+        chunk = fh.read(65536)
+        if not chunk:
+            break
+        for ch in chunk:
+            if mode == 1:
+                if esc:
+                    esc = False
+                    if slen < 64:
+                        sbuf.append(ch)
+                    slen += 1
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    mode = 0
+                    text = "".join(sbuf)
+                    if stack and stack[-1] == "o" and expect_key:
+                        out.append(("key", text))
+                        expect_key = False
+                    else:
+                        out.append(("scalar", "str", text))
+                        if stack and stack[-1] == "o":
+                            expect_key = True
+                else:
+                    if slen < 64:
+                        sbuf.append(ch)
+                    slen += 1
+            elif mode == 2:
+                if ch in "+-.eE0123456789truefalsn":
+                    abuf.append(ch)
+                else:
+                    end_atom()
+                    normal(ch)
+            else:
+                normal(ch)
+            if out:
+                yield from out
+                out.clear()
+    if mode == 2:
+        end_atom()
+        yield from out
+
+
+def value_events(value):
+    """Synthesize the same event stream from a parsed (JSONL) record."""
+    if isinstance(value, dict):
+        yield ("{",)
+        for k, v in value.items():
+            yield ("key", str(k))
+            yield from value_events(v)
+        yield ("}",)
+    elif isinstance(value, list):
+        yield ("[",)
+        for v in value:
+            yield from value_events(v)
+        yield ("]",)
+    elif isinstance(value, bool):
+        yield ("scalar", "bool", "true" if value else "false")
+    elif isinstance(value, int):
+        yield ("scalar", "int", str(value))
+    elif isinstance(value, float):
+        yield ("scalar", "float", repr(value))
+    elif value is None:
+        yield ("scalar", "null", "null")
+    else:
+        yield ("scalar", "str", str(value))
+
+
+_YAML_INT = re.compile(r"^[+-]?\d+$")
+_YAML_FLOAT = re.compile(r"^[+-]?(\d+\.\d*|\.\d+|\d+)([eE][+-]?\d+)?$")
+
+
+def yaml_events(fh):
+    try:
+        import yaml
+    except ImportError:
+        raise StructoError("yaml support needs PyYAML "
+                           "(pip install pyyaml)")
+    stack = []
+    expect_key = False
+    for ev in yaml.parse(fh):
+        if isinstance(ev, yaml.MappingStartEvent):
+            yield ("{",)
+            stack.append("o")
+            expect_key = True
+        elif isinstance(ev, yaml.MappingEndEvent):
+            stack.pop()
+            yield ("}",)
+            if stack and stack[-1] == "o":
+                expect_key = True
+        elif isinstance(ev, yaml.SequenceStartEvent):
+            yield ("[",)
+            stack.append("a")
+        elif isinstance(ev, yaml.SequenceEndEvent):
+            stack.pop()
+            yield ("]",)
+            if stack and stack[-1] == "o":
+                expect_key = True
+        elif isinstance(ev, (yaml.ScalarEvent, yaml.AliasEvent)):
+            if isinstance(ev, yaml.AliasEvent):
+                kind, text = "alias", "*" + (ev.anchor or "")
+            else:
+                text = ev.value
+                if ev.style:                      # quoted/block: a string
+                    kind = "str"
+                elif text in ("", "~", "null", "Null", "NULL"):
+                    kind = "null"
+                elif text in ("true", "false", "True", "False"):
+                    kind = "bool"
+                elif _YAML_INT.match(text):
+                    kind = "int"
+                elif _YAML_FLOAT.match(text):
+                    kind = "float"
+                else:
+                    kind = "str"
+            if stack and stack[-1] == "o" and expect_key:
+                yield ("key", text)
+                expect_key = False
+            else:
+                yield ("scalar", kind, text)
+                if stack and stack[-1] == "o":
+                    expect_key = True
+
+
+# ----------------------------------------------------------- schema driver
+
+def _node():
+    return {"count": 0, "types": {}, "objs": 0, "keys": {}, "order": [],
+            "elem": None, "arrays": 0, "alen_min": None, "alen_max": None,
+            "sampled": False, "examples": []}
+
+
+def _merge_scalar(node, kind, text):
+    node["count"] += 1
+    node["types"][kind] = node["types"].get(kind, 0) + 1
+    if kind == "str":
+        example = '"%s"' % (text[:EXAMPLE_CAP]
+                            + ("…" if len(text) > EXAMPLE_CAP else ""))
+    elif kind in ("int", "float"):
+        example = text
+    else:
+        return
+    if example not in node["examples"] \
+            and len(node["examples"]) < EXAMPLES_PER_NODE:
+        node["examples"].append(example)
+
+
+class Shape:
+    """Streams events into a merged schema, honoring --sample and --path."""
+
+    def __init__(self, sample, target=None):
+        self.root = _node()
+        self.sample = sample
+        self.target = target      # parsed --path segments, or None
+        self.hits = 1 if target is None else 0
+        self.cstack = []
+        self._comp = None
+
+    def _start_value(self):
+        st = self.cstack
+        if st:
+            top = st[-1]
+            if top["kind"] == "o":
+                comp = ("k", top.get("key") or "")
+            else:
+                comp = ("i", top["idx"])
+                top["idx"] += 1
+        else:
+            comp = None
+        self._comp = comp
+        if st and st[-1]["node"] is not None:
+            top = st[-1]
+            node = top["node"]
+            if top["kind"] == "o":
+                child = node["keys"].get(comp[1])
+                if child is None:
+                    child = _node()
+                    node["keys"][comp[1]] = child
+                    node["order"].append(comp[1])
+                return child
+            if comp[1] < self.sample:
+                if node["elem"] is None:
+                    node["elem"] = _node()
+                return node["elem"]
+            return None                       # beyond --sample: count only
+        if self.target is not None:
+            path = [f["comp"] for f in st if f["comp"] is not None]
+            if comp is not None:
+                path.append(comp)
+            if path == self.target:
+                self.hits += 1
+                return self.root
+            return None
+        return self.root if not st else None  # inside a skipped subtree
+
+    def feed(self, events):
+        for ev in events:
+            tag = ev[0]
+            if tag == "key":
+                self.cstack[-1]["key"] = ev[1]
+            elif tag == "scalar":
+                node = self._start_value()
+                if node is not None:
+                    _merge_scalar(node, ev[1], ev[2])
+            elif tag == "{":
+                node = self._start_value()
+                if node is not None:
+                    node["count"] += 1
+                    node["types"]["object"] = \
+                        node["types"].get("object", 0) + 1
+                    node["objs"] += 1
+                self.cstack.append({"kind": "o", "node": node, "idx": 0,
+                                    "key": None, "comp": self._comp})
+            elif tag == "[":
+                node = self._start_value()
+                if node is not None:
+                    node["count"] += 1
+                    node["types"]["array"] = \
+                        node["types"].get("array", 0) + 1
+                    node["arrays"] += 1
+                self.cstack.append({"kind": "a", "node": node, "idx": 0,
+                                    "key": None, "comp": self._comp})
+            elif tag == "}":
+                self.cstack.pop()
+            elif tag == "]":
+                frame = self.cstack.pop()
+                node = frame["node"]
+                if node is not None:
+                    length = frame["idx"]
+                    node["alen_min"] = (length if node["alen_min"] is None
+                                        else min(node["alen_min"], length))
+                    node["alen_max"] = max(length, node["alen_max"] or 0)
+                    if length > self.sample:
+                        node["sampled"] = True
+
+
+def render_schema(shape, level):
+    # level 0: full; 1: no examples; 2: depth<=2, no percentages;
+    # 3: top-level keys only
+    out = []
+    max_depth = {0: 99, 1: 99, 2: 2, 3: 1}[level]
+
+    def emit(name, node, parent_objs, depth):
+        types = "|".join(sorted(node["types"],
+                                key=lambda t: (-node["types"][t], t)))
+        parts = ["%s: %s" % (name, types or "empty")]
+        if name == "root" and node["count"] > 1:
+            parts[0] += " ×%d" % node["count"]
+        if parent_objs and level < 2:
+            parts.append("%d%%" % round(100.0 * node["count"] / parent_objs))
+        if node["arrays"] and level < 3:
+            lo, hi = node["alen_min"], node["alen_max"]
+            parts.append("len %d" % hi if lo == hi else "len %d..%d"
+                         % (lo, hi))
+            if node["sampled"]:
+                parts.append("(first %d sampled ~)" % shape.sample)
+        if level == 0 and node["examples"]:
+            parts.append("e.g. " + ", ".join(node["examples"]))
+        out.append("  " * depth + "  ".join(parts))
+        kids = [(k, node["keys"][k]) for k in node["order"]]
+        if node["elem"] is not None:
+            kids.append(("items", node["elem"]))
+        if depth < max_depth:
+            for key, child in kids:
+                emit(key, child, node["objs"], depth + 1)
+        elif kids and level < 3:
+            out.append("  " * (depth + 1) + "… (%d nested key%s)"
+                       % (len(kids), "" if len(kids) == 1 else "s"))
+
+    emit("root", shape.root, None, 0)
+    if level >= 2:
+        out.append("(collapsed for --max-tokens)")
+    return out
+
+
+# -------------------------------------------------------------------- csv
+
+_INT_RX = re.compile(r"^[+-]?\d+$")
+_FLOAT_RX = re.compile(r"^[+-]?(\d+\.\d*|\.\d+|\d+)([eE][+-]?\d+)?$")
+_DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
+
+def _cell_kind(cell):
+    if cell == "":
+        return "null"
+    c = cell.strip()
+    if _INT_RX.match(c):
+        return "int"
+    if _FLOAT_RX.match(c) and any(x in c for x in ".eE"):
+        return "float"
+    if c.lower() in ("true", "false"):
+        return "bool"
+    if _DATE_RX.match(c):
+        return "date"
+    return "str"
+
+
+def summarize_csv(fh, delim):
+    reader = csv.reader(fh, delimiter=delim)
+    header = next(reader, None)
+    if not header:
+        raise StructoError("empty file")
+    cols = [{"name": h, "types": {}, "nulls": 0, "num_min": None,
+             "num_max": None, "str_min": None, "str_max": None,
+             "distinct": set(), "over": False} for h in header]
+    rows = 0
+    samples = []
+    for row in reader:
+        if not row:
+            continue
+        rows += 1
+        if len(samples) < SAMPLE_ROWS:
+            samples.append(row)
+        for i, col in enumerate(cols):
+            cell = row[i] if i < len(row) else ""
+            kind = _cell_kind(cell)
+            col["types"][kind] = col["types"].get(kind, 0) + 1
+            if kind == "null":
+                col["nulls"] += 1
+                continue
+            if kind in ("int", "float"):
+                v = float(cell)
+                col["num_min"] = (v if col["num_min"] is None
+                                  else min(col["num_min"], v))
+                col["num_max"] = (v if col["num_max"] is None
+                                  else max(col["num_max"], v))
+            elif kind == "bool":
+                pass                        # min/max on booleans is noise
+            else:
+                col["str_min"] = (cell if col["str_min"] is None
+                                  else min(col["str_min"], cell))
+                col["str_max"] = (cell if col["str_max"] is None
+                                  else max(col["str_max"], cell))
+            if not col["over"]:
+                col["distinct"].add(cell)
+                if len(col["distinct"]) > DISTINCT_CAP:
+                    col["over"] = True
+                    col["distinct"] = set()
+    return {"cols": cols, "rows": rows, "samples": samples,
+            "delim": delim}
+
+
+def _col_type(col):
+    kinds = {k: n for k, n in col["types"].items() if k != "null"}
+    if not kinds:
+        return "null"
+    ranked = sorted(kinds, key=lambda k: (-kinds[k], k))
+    if len(ranked) == 1:
+        return ranked[0]
+    if set(ranked) == {"int", "float"}:
+        return "float"
+    return "mixed(%s)" % "|".join(ranked)
+
+
+def _num(v):
+    return ("%g" % v) if v is not None else "-"
+
+
+def _straw(v, cap=12):
+    if v is None:
+        return "-"
+    return '"%s"' % (v[:cap] + ("…" if len(v) > cap else ""))
+
+
+def render_csv(model, level):
+    # level 0: full + sample rows; 1: no sample rows; 2: type+null only;
+    # 3: column names + row count
+    cols, rows = model["cols"], model["rows"]
+    if level >= 3:
+        return ["columns (%d): %s" % (len(cols),
+                                      ", ".join(c["name"] for c in cols)),
+                "rows %d" % rows]
+    out = ["columns (%d), rows %d:" % (len(cols), rows)]
+    width = max(len(c["name"]) for c in cols)
+    for col in cols:
+        kind = _col_type(col)
+        null_pct = round(100.0 * col["nulls"] / rows) if rows else 0
+        line = "  %-*s  %-6s null %d%%" % (width, col["name"], kind,
+                                           null_pct)
+        if level < 2:
+            if col["num_min"] is not None:
+                line += "  min %s max %s" % (_num(col["num_min"]),
+                                             _num(col["num_max"]))
+            elif col["str_min"] is not None:
+                line += "  min %s max %s" % (_straw(col["str_min"]),
+                                             _straw(col["str_max"]))
+            line += ("  distinct >%d ~" % DISTINCT_CAP if col["over"]
+                     else "  distinct %d" % len(col["distinct"]))
+        out.append(line)
+    if level == 0 and model["samples"]:
+        out.append("sample rows (%d):" % len(model["samples"]))
+        for row in model["samples"]:
+            out.append("  " + model["delim"].join(row))
+    if level >= 2:
+        out.append("(detail collapsed for --max-tokens)")
+    return out
+
+
+# -------------------------------------------------------------------- log
+
+_TS_FORMATS = (
+    ("iso-8601", re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}"
+                            r"(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?")),
+    ("syslog", re.compile(r"^[A-Z][a-z]{2} +\d{1,2} \d{2}:\d{2}:\d{2}")),
+    ("clf", re.compile(r"\[\d{2}/[A-Z][a-z]{2}/\d{4}(?::\d{2}){3}")),
+    ("epoch", re.compile(r"^\d{10}(?:\.\d+)?\b")),
+)
+_UUID_RX = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+                      r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
+_HEX_RX = re.compile(r"\b[0-9a-f]{8,}\b")
+_NUM_RX = re.compile(r"\b\d+(?:\.\d+)?\b")
+_QUOTED_RX = re.compile(r"\"[^\"]*\"|'[^']*'")
+
+
+def _template(line, ts_rx):
+    text = line
+    if ts_rx is not None:
+        text = ts_rx.sub("", text, count=1)
+    text = _UUID_RX.sub("<uuid>", text)
+    text = _HEX_RX.sub("<hex>", text)
+    text = _QUOTED_RX.sub("<str>", text)
+    text = _NUM_RX.sub("<n>", text)
+    return " ".join(text.split())
+
+
+def summarize_log(fh, path):
+    count = 0
+    first = last = None
+    ts_name, ts_rx = None, None
+    templates = {}
+    overflow = 0
+    for line in fh:
+        count += 1
+        line = line.rstrip("\r\n")
+        if not line.strip():
+            continue
+        if first is None:
+            first = (count, line)
+            for name, rx in _TS_FORMATS:
+                if rx.search(line):
+                    ts_name, ts_rx = name, rx
+                    break
+        last = (count, line)
+        tpl = _template(line, ts_rx)
+        if tpl in templates:
+            templates[tpl] += 1
+        elif len(templates) < TEMPLATE_CAP:
+            templates[tpl] = 1
+        else:
+            overflow += 1
+    return {"path": path, "lines": count, "first": first, "last": last,
+            "ts": ts_name, "templates": templates, "overflow": overflow}
+
+
+def render_log(model, level):
+    # level 0: top 5 + first/last; 1: top 3, no first/last; 2: counts only
+    out = ["lines %d, timestamp %s" % (model["lines"],
+                                       model["ts"] or "none detected")]
+    ranked = sorted(model["templates"].items(),
+                    key=lambda kv: (-kv[1], kv[0]))
+    total = len(ranked) + (1 if model["overflow"] else 0)
+    if level >= 2:
+        out.append("templates: %d distinct%s"
+                   % (total, " ~" if model["overflow"] else ""))
+        out.append("(detail collapsed for --max-tokens)")
+        return out
+    top = TOP_TEMPLATES if level == 0 else 3
+    out.append("templates (top %d of %d):" % (min(top, total), total))
+    for tpl, n in ranked[:top]:
+        out.append("  %d× %s" % (n, tpl[:120]))
+    if model["overflow"]:
+        out.append("  (+%d lines in templates beyond the %d-template cap ~)"
+                   % (model["overflow"], TEMPLATE_CAP))
+    if level == 0 and model["first"]:
+        out.append("first %s:%d  %s" % (model["path"], model["first"][0],
+                                        model["first"][1][:100]))
+        out.append("last  %s:%d  %s" % (model["path"], model["last"][0],
+                                        model["last"][1][:100]))
+    return out
+
+
+# -------------------------------------------------------------------- xml
+
+def summarize_xml(path):
+    from xml.etree.ElementTree import iterparse
+    root = {"count": 0, "attrs": {}, "kids": {}, "korder": [], "text": 0}
+    stack = [root]
+    try:
+        for event, elem in iterparse(path, events=("start", "end")):
+            tag = elem.tag
+            if event == "start":
+                parent = stack[-1]
+                node = parent["kids"].get(tag)
+                if node is None:
+                    node = {"count": 0, "attrs": {}, "kids": {},
+                            "korder": [], "text": 0}
+                    parent["kids"][tag] = node
+                    parent["korder"].append(tag)
+                node["count"] += 1
+                for attr in elem.attrib:
+                    node["attrs"][attr] = node["attrs"].get(attr, 0) + 1
+                stack.append(node)
+            else:
+                node = stack.pop()
+                if elem.text and elem.text.strip():
+                    node["text"] += 1
+                elem.clear()
+    except SyntaxError as exc:
+        raise StructoError("xml parse error: %s" % exc)
+    return root
+
+
+def render_xml(model, level):
+    # level 0: full depth; 1: depth 2; 2: depth 1 + note
+    max_depth = {0: 99, 1: 2, 2: 1}[level]
+    out = []
+
+    def emit(tag, node, depth):
+        parts = ["%s ×%d" % (tag, node["count"])]
+        attrs = sorted(node["attrs"].items(), key=lambda kv: (-kv[1], kv[0]))
+        if attrs:
+            parts.append(" ".join("@%s ×%d" % (a, n) for a, n in attrs))
+        if node["text"]:
+            parts.append("text ×%d" % node["text"])
+        out.append("  " * (depth - 1) + "  ".join(parts))
+        if depth < max_depth:
+            for kid in node["korder"]:
+                emit(kid, node["kids"][kid], depth + 1)
+        elif node["korder"]:
+            out.append("  " * depth + "… (%d nested element%s)"
+                       % (len(node["korder"]),
+                          "" if len(node["korder"]) == 1 else "s"))
+
+    for tag in model["korder"]:
+        emit(tag, model["kids"][tag], 1)
+    if level >= 2:
+        out.append("(nesting collapsed for --max-tokens)")
+    return out
+
+
+# -------------------------------------------------------------- detection
+
+def detect(path):
+    ext = os.path.splitext(path)[1].lower()
+    if ext in EXT_FORMATS:
+        return EXT_FORMATS[ext], "extension"
+    with open(path, "rb") as fh:
+        head = fh.read(8192)
+    if b"\0" in head:
+        raise StructoError("%s looks binary; no structure to report"
+                           % path)
+    text = head.decode("utf-8", "replace")
+    stripped = text.lstrip()
+    lines = [l for l in text.splitlines() if l.strip()]
+    if stripped.startswith("<"):
+        return "xml", "sniffed"
+    if stripped[:1] in "{[":
+        if len(lines) >= 2:
+            try:
+                json.loads(lines[0])
+                json.loads(lines[1])
+                return "jsonl", "sniffed"
+            except ValueError:
+                pass
+        return "json", "sniffed"
+    for delim, fmt in (("\t", "tsv"), (",", "csv")):
+        counts = [l.count(delim) for l in lines[:5]]
+        if len(counts) >= 2 and counts[0] > 0 and len(set(counts)) == 1:
+            return fmt, "sniffed"
+    if lines and (lines[0].startswith("---")
+                  or re.match(r"^[\w.-]+:(?:\s|$)", lines[0])):
+        return "yaml", "sniffed"
+    return "log", "sniffed"
+
+
+def parse_path(spec):
+    segs = []
+    pos = 0
+    for m in re.finditer(r"([^.\[\]]+)|\[(\d+)\]|\.", spec):
+        if m.start() != pos:
+            break
+        pos = m.end()
+        if m.group(1):
+            segs.append(("k", m.group(1)))
+        elif m.group(2) is not None:
+            segs.append(("i", int(m.group(2))))
+    if pos != len(spec) or not segs:
+        raise StructoError("bad --path %r (expected like a.b[0].c)" % spec)
+    return segs
+
+
+# --------------------------------------------------------------------- CLI
+
+def summarize(path, fmt, sample, target):
+    """Build (model, levels) for a detected format."""
+    if fmt in ("json", "jsonl", "yaml"):
+        shape = Shape(sample, target)
+        records = None
+        if fmt == "json":
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                shape.feed(json_events(fh))
+        elif fmt == "yaml":
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                shape.feed(yaml_events(fh))
+        else:
+            records = 0
+            bad = 0
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except ValueError:
+                        bad += 1
+                        continue
+                    records += 1
+                    shape.feed(value_events(record))
+        if target is not None and shape.hits == 0:
+            raise StructoError("--path not found in %s" % path)
+        extra = ""
+        if records is not None:
+            extra = ", records %d" % records
+            if bad:
+                extra += ", %d unparsable line%s skipped" % (
+                    bad, "" if bad == 1 else "s")
+        levels = [lambda lv=lv: render_schema(shape, lv)
+                  for lv in (0, 1, 2, 3)]
+        return extra, levels
+    if fmt in ("csv", "tsv"):
+        with open(path, encoding="utf-8", errors="replace",
+                  newline="") as fh:
+            model = summarize_csv(fh, "\t" if fmt == "tsv" else ",")
+        return "", [lambda lv=lv: render_csv(model, lv)
+                    for lv in (0, 1, 2, 3)]
+    if fmt == "xml":
+        model = summarize_xml(path)
+        return "", [lambda lv=lv: render_xml(model, lv) for lv in (0, 1, 2)]
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        model = summarize_log(fh, path)
+    return "", [lambda lv=lv: render_log(model, lv) for lv in (0, 1, 2)]
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        prog="structo",
+        description="print the schema and shape of a data file "
+                    "instead of its content")
+    parser.add_argument("file", metavar="FILE")
+    parser.add_argument("--path", metavar="A.B[0].C",
+                        help="zoom into a JSON/YAML subtree")
+    parser.add_argument("--sample", type=int, metavar="N",
+                        default=DEFAULT_SAMPLE,
+                        help="array elements aggregated per array "
+                             "(default %d)" % DEFAULT_SAMPLE)
+    parser.add_argument("--max-tokens", type=int, metavar="N", default=0,
+                        help="cap output at roughly N tokens (bytes/4)")
+    parser.add_argument("--version", action="version",
+                        version="structo %s" % __version__)
+    args = parser.parse_args(argv)
+
+    try:
+        if not os.path.isfile(args.file):
+            raise StructoError("not a file: %s" % args.file)
+        fmt, how = detect(args.file)
+        target = None
+        if args.path:
+            if fmt not in ("json", "jsonl", "yaml"):
+                raise StructoError("--path zooms into json/yaml/jsonl "
+                                   "(%s detected as %s)" % (args.file, fmt))
+            target = parse_path(args.path)
+        extra, levels = summarize(args.file, fmt, max(1, args.sample),
+                                  target)
+        header = "structo %s — format: %s (%s)%s" % (args.file, fmt, how,
+                                                     extra)
+        if target is not None:
+            header += ", path %s" % args.path
+        budget = max(0, args.max_tokens)
+        wrapped = [lambda lv=lv: [header, ""] + lv() for lv in levels]
+        lines = fit(wrapped, budget)
+    except StructoError as exc:
+        print("structo: %s" % exc, file=sys.stderr)
+        return 2
+
+    try:
+        sys.stdout.reconfigure(errors="replace")
+    except (AttributeError, ValueError):
+        pass
+    print("\n".join(lines))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

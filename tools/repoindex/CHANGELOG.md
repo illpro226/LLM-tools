@@ -1,0 +1,27 @@
+# repoindex Changelog
+
+- 2026-07-06: Added initial documentation scaffold.
+- 2026-07-10: v0.1.3 — `update` no longer wipes `testmap record`'s
+  `source=coverage` rows when rebuilding derived tables: coverage links are
+  recorded facts, not re-derivable from source, so they now persist until
+  their test file changes or either endpoint file leaves the repo (built
+  for testmap v0.1.0; see its ADR-002). 48 tests.
+- 2026-07-09: Adopted stdlib-only extraction (ADR-007), matching xread/
+  repomap/gitbrief's precedent, instead of the originally planned
+  tree-sitter. Implemented `build`/`update`/`status`/`sql`, the
+  `repoindex.extract` library, repo-wide reference resolution, test-link
+  seeding, and Go structural `implements` detection. v0.1.0.
+- 2026-07-10: v0.1.2 — Python calls through names bound in the enclosing
+  function (local assignments, parameters, nested defs, `except`/`nonlocal`
+  bindings) are now recorded as `<dynamic>` instead of resolving to an
+  unrelated repo-wide symbol of the same name, and local assignments no
+  longer produce read/write refs to a shadowed module-level variable (fixes
+  known-issue `repoindex-local-var-shadowing-resolved-ref`; the JS/TS and Go
+  heuristic extractors don't track locals, so the same class of phantom ref
+  remains possible there). 46 tests.
+- 2026-07-09: Review fixes (v0.1.1): JS/TS braces inside comment/string-only
+  lines no longer corrupt the depth counter (previously hid every top-level
+  symbol after the first commented brace); Python import-time code (module
+  and class bodies, class decorators) now produces call/read refs, so
+  module-level-only callees no longer look dead; Python whole-module imports
+  (`import lib; lib.add()`) now resolve instead of staying heuristic.

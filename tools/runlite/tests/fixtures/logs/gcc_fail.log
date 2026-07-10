@@ -1,0 +1,8 @@
+src/client.c:41:15: error: expected ';' after expression
+    retries = 3
+              ^
+              ;
+src/auth.c:24:9: warning: unused variable 'mfa' [-Wunused-variable]
+    int mfa = 0;
+        ^
+1 warning and 1 error generated.

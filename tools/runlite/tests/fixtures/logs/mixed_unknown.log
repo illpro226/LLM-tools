@@ -1,0 +1,30 @@
+Build started for target release
+Step 1/8 : fetch dependencies
+Step 2/8 : resolve versions
+warning: config value 'threads' ignored
+Step 3/8 : compile core
+Step 4/8 : compile plugins
+Step 5/8 : bundle assets
+Step 6/8 : optimize bundle
+Step 7/8 : package artifacts
+Step 8/8 : finalize
+copying artifact core.pkg
+copying artifact plugins.pkg
+copying artifact assets.pkg
+verifying checksums
+checksum core.pkg valid
+checksum plugins.pkg valid
+checksum assets.pkg valid
+linking modules
+ERROR: failed to link module core (core/link.c:88)
+link stage aborted
+cleaning temporary files
+removed tmp/a
+removed tmp/b
+removed tmp/c
+removed tmp/d
+removed tmp/e
+removed tmp/f
+removed tmp/g
+removed tmp/h
+Build did not complete

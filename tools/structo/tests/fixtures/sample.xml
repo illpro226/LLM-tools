@@ -1,0 +1,11 @@
+<catalog>
+  <book id="1" lang="en">
+    <title>Alpha</title>
+    <price>10.5</price>
+  </book>
+  <book id="2">
+    <title>Beta</title>
+    <price>8.0</price>
+  </book>
+  <note>hello</note>
+</catalog>

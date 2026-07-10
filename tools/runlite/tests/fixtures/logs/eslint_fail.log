@@ -1,0 +1,8 @@
+/repo/src/auth/login.js
+  24:5   error    'mfa' is not defined              no-undef
+  30:1   warning  Unexpected console statement      no-console
+
+/repo/src/http/client.js
+  41:11  error    Missing semicolon                 semi
+
+✖ 3 problems (2 errors, 1 warning)

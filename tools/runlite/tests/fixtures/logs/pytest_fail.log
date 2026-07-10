@@ -1,0 +1,29 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.0, pytest-8.0.0, pluggy-1.4.0
+rootdir: /repo
+collected 12 items
+
+tests/test_auth.py ..F.                                                  [ 33%]
+tests/test_http.py ......F.                                              [100%]
+
+=================================== FAILURES ===================================
+_______________________________ test_login_mfa ________________________________
+
+    def test_login_mfa():
+        user = make_user()
+>       assert login(user, mfa=None) is False
+E       AssertionError: assert True is False
+
+tests/test_auth.py:24: AssertionError
+______________________________ test_retry_count _______________________________
+
+    def test_retry_count():
+        client = Client()
+>       assert client.retries == 5
+E       assert 3 == 5
+
+tests/test_http.py:41: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_auth.py::test_login_mfa - AssertionError: assert True is False
+FAILED tests/test_http.py::test_retry_count - assert 3 == 5
+========================= 2 failed, 10 passed in 0.53s =========================

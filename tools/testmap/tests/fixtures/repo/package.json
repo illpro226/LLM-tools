@@ -1,0 +1,7 @@
+{
+  "name": "testmap-fixture",
+  "private": true,
+  "devDependencies": {
+    "vitest": "^1.6.0"
+  }
+}

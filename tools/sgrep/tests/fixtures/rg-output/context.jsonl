@@ -1,0 +1,12 @@
+{"type":"begin","data":{"path":{"text":"tree/src/core.py"}}}
+{"type":"context","data":{"path":{"text":"tree/src/core.py"},"lines":{"text":"\n"},"line_number":2,"absolute_offset":27,"submatches":[]}}
+{"type":"match","data":{"path":{"text":"tree/src/core.py"},"lines":{"text":"# needle lookup helper\n"},"line_number":3,"absolute_offset":28,"submatches":[{"match":{"text":"needle"},"start":2,"end":8}]}}
+{"type":"match","data":{"path":{"text":"tree/src/core.py"},"lines":{"text":"DEFAULT = \"needle-default\"\n"},"line_number":4,"absolute_offset":51,"submatches":[{"match":{"text":"needle"},"start":11,"end":17}]}}
+{"type":"context","data":{"path":{"text":"tree/src/core.py"},"lines":{"text":"\n"},"line_number":5,"absolute_offset":78,"submatches":[]}}
+{"type":"context","data":{"path":{"text":"tree/src/core.py"},"lines":{"text":"\n"},"line_number":6,"absolute_offset":79,"submatches":[]}}
+{"type":"match","data":{"path":{"text":"tree/src/core.py"},"lines":{"text":"def find_needle(haystack):\n"},"line_number":7,"absolute_offset":80,"submatches":[{"match":{"text":"needle"},"start":9,"end":15}]}}
+{"type":"context","data":{"path":{"text":"tree/src/core.py"},"lines":{"text":"    for item in haystack:\n"},"line_number":8,"absolute_offset":107,"submatches":[]}}
+{"type":"match","data":{"path":{"text":"tree/src/core.py"},"lines":{"text":"        if \"needle\" in item:\n"},"line_number":9,"absolute_offset":133,"submatches":[{"match":{"text":"needle"},"start":12,"end":18}]}}
+{"type":"context","data":{"path":{"text":"tree/src/core.py"},"lines":{"text":"            return item\n"},"line_number":10,"absolute_offset":162,"submatches":[]}}
+{"type":"end","data":{"path":{"text":"tree/src/core.py"},"binary_offset":null,"stats":{"elapsed":{"secs":0,"nanos":42700,"human":"0.000043s"},"searches":1,"searches_with_match":1,"bytes_searched":202,"bytes_printed":1638,"matched_lines":4,"matches":4}}}
+{"data":{"elapsed_total":{"human":"0.001517s","nanos":1517000,"secs":0},"stats":{"bytes_printed":1638,"bytes_searched":202,"elapsed":{"human":"0.000043s","nanos":42700,"secs":0},"matched_lines":4,"matches":4,"searches":1,"searches_with_match":1}},"type":"summary"}

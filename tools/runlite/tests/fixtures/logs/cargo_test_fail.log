@@ -1,0 +1,19 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.52s
+     Running unittests src/lib.rs (target/debug/deps/app-abc123)
+
+running 8 tests
+test tests::retry_count ... FAILED
+
+failures:
+
+---- tests::retry_count stdout ----
+thread 'tests::retry_count' panicked at src/client.rs:41:5:
+assertion `left == right` failed
+  left: 3
+ right: 5
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+failures:
+    tests::retry_count
+
+test result: FAILED. 7 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
