@@ -94,7 +94,7 @@ python -m pytest        # run tests (-m "not slow" skips the memory test)
 ./structo.py FILE [--path a.b[0].c] [--sample N]   # schema/shape of a data file
 
 cd tools/repoindex
-python -m pytest        # run tests (46 tests against tests/fixtures/repo/)
+python -m pytest        # run tests (48 tests against tests/fixtures/repo/)
 ./repoindex.py build     # full index -> .repoindex/index.db
 ./repoindex.py update    # incremental (mtime/hash change detection)
 ./repoindex.py status    # freshness + per-language file/symbol counts
