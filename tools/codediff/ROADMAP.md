@@ -1,5 +1,7 @@
 # codediff Roadmap
 
+M1–M4 shipped in v0.1.0 (2026-07-10), as amended by `docs/decisions/0002`
+and DECISIONS.md ADR-004/ADR-005 — see the per-milestone notes below.
 Depends on `repoindex` shipping `repoindex.extract` as an importable library.
 
 ## M1 — Scaffold and symbol diff
@@ -18,14 +20,17 @@ Depends on `repoindex` shipping `repoindex.extract` as an importable library.
 
 ## M3 — Risk
 
-- Additive scorer with printed reasons; `.codediff.toml` keyword config;
+- Flat, individually explainable flags with printed reasons (no scorer or
+  grade — docs/decisions/0002); `.codediff.toml` keyword config;
   tests-changed signal from the shared `tests` table.
 
 ## M4 — Outputs
 
 - `--json`; `--max-tokens N` (Mechanical collapses first); offline-by-default
-  guarantee test. Optional `--llm` narrative over the compact delta.
+  guarantee test. No `--llm` — `--json` is the narrator payload (ADR-005).
 
 ## Later
 
 - Commit-message draft mode; review-comment formatting.
+- A Go fixture for the core classification cases (the extractor already
+  tracks repoindex's Go support; only test coverage is missing).

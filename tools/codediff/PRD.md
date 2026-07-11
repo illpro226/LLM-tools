@@ -1,5 +1,11 @@
 # codediff PRD
 
+> Amended by [`docs/decisions/0002`](/opt/des_stack/LLM-tools/docs/decisions/0002-wave-4-codediff.md)
+> and DECISIONS.md ADR-004/ADR-005: no tree-sitter (repoindex's pure
+> `extract()` parses both sides), risk is flat explainable flags — the
+> `LOW/MED/HIGH` grade below is superseded — and there is no `--llm` flag
+> (`--json` is the narrator payload).
+
 ## Problem statement
 
 Raw diff hunks are a poor way to understand a change: reviewers and agents think in terms of behavior changes, API surface changes, removals, and risk. `gitbrief` tells you *what files* changed; `codediff` tells you *what the change means* — far more useful per token for review, commit messages, and deciding what to test.
