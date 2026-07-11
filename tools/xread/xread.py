@@ -26,7 +26,7 @@ import os
 import re
 import sys
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 PY_EXTS = {".py", ".pyi"}
 TS_EXTS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"}
@@ -328,12 +328,22 @@ def _query_blocks(idx, path, lines, symbols):
     covered_to = 0
     tops = sorted((s for s in (symbols or ()) if s["top"]),
                   key=lambda s: s["start"])
-    for s in tops:
+    for j, s in enumerate(tops):
         if s["start"] > covered_to + 1:
             for w in range(covered_to + 1, s["start"], WINDOW):
                 blocks.append((w, min(w + WINDOW - 1, s["start"] - 1)))
-        blocks.append((s["start"], s["end"]))
-        covered_to = max(covered_to, s["end"])
+        end = s["end"]
+        if j + 1 < len(tops):
+            # Markdown sections nest: an H1's span runs to the next H1 or
+            # EOF, containing every subsection. Clamp each block at the
+            # next heading so blocks tile the file and a parent section's
+            # body can't outscore (and swallow) the specific subsection a
+            # query is aimed at (known-issue
+            # xread-query-returns-whole-markdown-file). Code symbols are
+            # non-overlapping, so this is a no-op for them.
+            end = min(end, tops[j + 1]["start"] - 1)
+        blocks.append((s["start"], end))
+        covered_to = max(covered_to, end)
     for w in range(covered_to + 1, len(lines) + 1, WINDOW):
         blocks.append((w, min(w + WINDOW - 1, len(lines))))
     return [(idx, path, a, b) for a, b in blocks]
@@ -343,13 +353,23 @@ def resolve_query(files, query, top):
     keywords = [k for k in query.lower().split() if k]
     if not keywords:
         raise XreadError("empty --query")
+    word_res = [re.compile(r"\b%s\b" % re.escape(k)) for k in keywords]
     scored = []
     for idx, (path, lines, symbols) in enumerate(files):
         for bidx, bpath, a, b in _query_blocks(idx, path, lines, symbols):
             text = "\n".join(lines[a - 1:b]).lower()
             hits = sum(text.count(k) for k in keywords)
             if hits:
-                score = hits / max(1, b - a + 1) ** 0.5
+                # Weight by whole-word keyword coverage so a block
+                # containing every query word outranks one where a single
+                # common word repeats, or only appears inside longer words
+                # ("building" is not a hit for "build"). Substring hits
+                # still count toward volume, and max(matched, 1) keeps
+                # partial-word queries ("instal") working when no block
+                # has a whole-word match.
+                matched = sum(1 for rx in word_res if rx.search(text))
+                score = (hits * max(matched, 1) / len(keywords)
+                         / max(1, b - a + 1) ** 0.5)
                 scored.append(_region(bidx, bpath, a, b, score))
     scored.sort(key=lambda r: (-r["score"], r["file_index"], r["start"]))
     return scored[:top]

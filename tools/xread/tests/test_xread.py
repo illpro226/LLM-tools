@@ -193,6 +193,42 @@ def test_query_no_hits_prints_nothing(capsys):
     assert out == ""
 
 
+def test_query_markdown_blocks_tile_the_file():
+    # known-issue xread-query-returns-whole-markdown-file: the H1 section
+    # spans the whole doc; as a query block it must be clamped at the next
+    # heading so blocks partition the file instead of nesting.
+    path, lines, symbols = xread.load([fx("doc.md")])[0]
+    spans = sorted((a, b) for _, _, a, b
+                   in xread._query_blocks(0, path, lines, symbols))
+    assert (1, len(lines)) not in spans   # no whole-file block
+    assert (5, 15) in spans               # ## Install section, intact
+    covered_to = 0
+    for a, b in spans:                    # no gaps, no overlap
+        assert a == covered_to + 1
+        covered_to = b
+    assert covered_to == len(lines)
+
+
+def test_query_markdown_all_keywords_beat_repeated_one(capsys):
+    # A section matching every query word must outrank both a section
+    # repeating one common word and an intro matching only inside longer
+    # words ("building" is not a hit for "build").
+    code, out, _ = run([fx("rank.md"), "--query", "suggested build order",
+                        "--top", "1"], capsys)
+    assert code == 0
+    start = lineno("rank.md", "## Suggested build order")
+    assert headers_in(out) == [header("rank.md", start, 11)]
+
+
+def test_query_markdown_returns_section_not_whole_file(capsys):
+    code, out, _ = run([fx("doc.md"), "--query", "install"], capsys)
+    assert code == 0
+    assert "make install" in out          # the ## Install section is there
+    heads = headers_in(out)
+    assert header("doc.md", 1, 27) not in heads   # not the whole file
+    assert "Nothing yet." not in out              # ## FAQ (no hits) is not
+
+
 # ------------------------------------------------------ markdown mode
 
 def test_headings_outline(capsys):

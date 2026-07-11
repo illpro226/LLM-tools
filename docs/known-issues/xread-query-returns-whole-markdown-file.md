@@ -1,5 +1,14 @@
 # xread: `--query` on a markdown heading phrase returns the whole file
 
+**RESOLVED 2026-07-11 (xread v0.1.1):** query blocks are clamped at the
+next top-level symbol, so markdown sections tile the file and the H1's
+whole-document span no longer competes with the subsection a query is
+aimed at. Scoring also gained whole-word keyword-coverage weighting
+(`building` no longer counts as a hit for `build`), which the START.md
+reproduction needed to rank the right section first, not merely avoid
+the whole file. `xread START.md --query "Suggested build order" --top 1`
+now returns exactly START.md:180-189.
+
 **What breaks:** `xread START.md --query "Suggested build order"` printed
 `== START.md:1-189 ==` — the entire ~5k-token file — instead of the ~15-line
 `## Suggested build order` section (START.md:180). The tool's purpose

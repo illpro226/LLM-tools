@@ -1,6 +1,6 @@
 # xread Status
 
-Implemented (v0.1.0) and passing tests.
+Implemented (v0.1.1) and passing tests.
 
 - `xread.py` — single-file CLI covering all PRD modes plus the markdown mode
   from repo ADR-0001: `--symbol` (nested names, markdown sections),
@@ -12,8 +12,9 @@ Implemented (v0.1.0) and passing tests.
   Python via `ast` (exact spans, decorators + attached comments), JS/TS via
   a brace-tracking line scanner (heuristic: declarations must open their
   brace on the same line), markdown via fence-aware heading scan.
-- Tests: `tests/test_xread.py` (27 tests) against fixtures in
-  `tests/fixtures/` (sample.py, sample.ts, doc.md, generated big.py).
+- Tests: `tests/test_xread.py` (30 tests) against fixtures in
+  `tests/fixtures/` (sample.py, sample.ts, doc.md, rank.md, generated
+  big.py).
 
 Not done / later: no packaging or PATH install story; TS parser does not
 handle Allman-style braces or multi-line arrow parameter lists; no
