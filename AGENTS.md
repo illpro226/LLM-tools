@@ -12,9 +12,10 @@ docs (`STATUS.md`, `CHANGELOG.md`, `DECISIONS.md`) and `tests/`.
 The section below is self-contained — copy it into any project's
 AGENTS.md (or your agent's global instructions) to adopt the suite there.
 
-The tools are on PATH via the `.cmd` shims in `bin\` (Windows /
-PowerShell; new shells only). If a name isn't recognized, call the shim
-by full path or run `python tools\<name>\<name>.py` from this repo.
+The tools are on PATH via the shims in `bin/` — `.cmd` for
+cmd/PowerShell, extensionless `sh` scripts for Git Bash/WSL/POSIX
+(new shells only). If a name isn't recognized, call the shim by full
+path or run `python tools/<name>/<name>.py` from this repo.
 
 | Instead of | Use | Example |
 |---|---|---|

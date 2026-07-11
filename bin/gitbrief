@@ -1,0 +1,2 @@
+#!/bin/sh
+exec python "$(dirname "$0")/../tools/gitbrief/gitbrief.py" "$@"
