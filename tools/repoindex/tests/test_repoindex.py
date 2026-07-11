@@ -589,6 +589,28 @@ def test_go_import_qualified_call_still_resolves(repo):
     assert rows == [("go/mathutil/mathutil.go::Add", "resolved")]
 
 
+def test_package_import_links_named_modules():
+    # known-issue repoindex-package-module-tests-not-linked: a test doing
+    # `from pkg import mod` must link to pkg/__init__.py and pkg/mod.py,
+    # not silently produce no row (pkg.py doesn't exist).
+    from repoindex import resolve
+    files = [
+        extract.extract("tool/pkg/__init__.py", ""),
+        extract.extract("tool/pkg/extract.py", "def extract():\n    return 1\n"),
+        extract.extract("tool/pkg/other.py", "def o():\n    return 2\n"),
+        extract.extract(
+            "tool/tests/test_pkg.py",
+            "from pkg import extract\n\n"
+            "def test_x():\n    assert extract.extract() == 1\n"),
+    ]
+    links = {(l.test_file, l.target_file, l.source)
+             for l in resolve.seed_tests(files)}
+    assert ("tool/tests/test_pkg.py", "tool/pkg/extract.py", "import") in links
+    assert ("tool/tests/test_pkg.py", "tool/pkg/__init__.py", "import") in links
+    # only the named module is linked, not every module in the package
+    assert not any(t == "tool/pkg/other.py" for _, t, _ in links)
+
+
 def test_python_whole_module_import_resolves():
     from repoindex import resolve
     lib = extract.extract("lib.py", "def add(a, b):\n    return a + b\n")

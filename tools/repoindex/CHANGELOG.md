@@ -1,6 +1,15 @@
 # repoindex Changelog
 
 - 2026-07-06: Added initial documentation scaffold.
+- 2026-07-11: v0.1.5 — test seeding now links a test that imports a
+  package to the package's `__init__.py` and to the modules it names
+  (`from pkg import mod` -> `pkg/mod.py`); previously only `pkg.py` was
+  tried, so real packages produced no link at all and every consumer of
+  the `tests` table (codediff risk flags, testmap, `rq untested`)
+  reported false "untested" results (fixes known-issue
+  `repoindex-package-module-tests-not-linked`). Function-level imports
+  are still invisible to the extractor — a module imported only inside a
+  test function stays unlinked. 57 tests.
 - 2026-07-10: v0.1.4 — the JS/TS and Go extractors now track function-local
   bindings the way the Python one has since v0.1.2: calls through names
   bound in the enclosing function (params, receiver, `const`/`let`/`var`,

@@ -1,6 +1,6 @@
 # repoindex Status
 
-Implemented (v0.1.4) and passing tests.
+Implemented (v0.1.5) and passing tests.
 
 - `repoindex/` — importable package: `extract.py` (pure, filesystem-free
   `extract(path, source, lang=None) -> ExtractedFile`, ADR-006), `resolve.py`
@@ -32,7 +32,7 @@ Implemented (v0.1.4) and passing tests.
   everything commits in one transaction.
 - `sql` is read-only (`mode=ro` + a write-statement pre-check); `status`
   reports freshness and per-language file/symbol counts.
-- Tests: `tests/test_repoindex.py` (56 tests) against a shared fixture repo
+- Tests: `tests/test_repoindex.py` (57 tests) against a shared fixture repo
   (`tests/fixtures/repo/`) covering every relationship kind — a call cycle,
   an import cycle (`py/cyc_a.py` <-> `py/cyc_b.py`, added for `rq findcycles`),
   a dynamic/getattr call, an ambiguous bare name, reads/writes, a resolvable

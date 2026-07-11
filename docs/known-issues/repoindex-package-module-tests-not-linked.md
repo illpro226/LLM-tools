@@ -1,5 +1,15 @@
 # repoindex: tests importing a package don't link to its internal modules
 
+**RESOLVED 2026-07-11 (repoindex v0.1.5):** test seeding now links a
+package-importing test to the package's `__init__.py` and to each module
+named in `from pkg import mod` (directory-relative first, then a unique
+repo-wide package match — the same fallback spirit as module imports).
+On this repo's index, `test_repoindex.py` now links to `cli.py`,
+`extract.py`, and `__init__.py`, and codediff no longer flags extract.py
+as uncovered. Residuals: imports inside test *functions* are invisible to
+the extractor (module-body imports only), and the cross-tool sys.path
+import (codediff -> repoindex.extract) remains a documented limitation.
+
 **What breaks:** codediff's risk block flagged `no known tests cover 1
 changed file` for `tools/repoindex/repoindex/extract.py` — a file that is
 in reality covered heavily by `tools/repoindex/tests/test_repoindex.py`

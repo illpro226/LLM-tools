@@ -221,6 +221,37 @@ def _resolve_one(name, ef, local_idx, imports, by_file, by_dir, global_bare, roo
 
 # ------------------------------------------------------- test seeding ---
 
+def _py_package_targets(ef, imp, by_file):
+    """Files a package import covers: the package's __init__.py plus the
+    module named by `from pkg import mod` when that name is itself a file.
+    _py_candidates only tries pkg.py, so a test importing a real package
+    (pkg/__init__.py) would otherwise produce no link at all (known-issue
+    repoindex-package-module-tests-not-linked). Directory-relative first,
+    then unique repo-wide — same spirit as _module_targets's basename
+    fallback."""
+    if ef.language != "python":
+        return []
+    rel = imp.module.lstrip(".").replace(".", "/")
+    if not rel:
+        return []
+    init = f"{rel}/__init__.py"
+    dir_ = os.path.dirname(ef.path)
+    if dir_ and f"{dir_}/{init}" in by_file:
+        packages = [f"{dir_}/{rel}"]
+    elif init in by_file:
+        packages = [rel]
+    else:
+        suffix = f"/{init}"
+        packages = [p[: -len("/__init__.py")] for p in by_file
+                    if p.endswith(suffix)]
+        if len(packages) != 1:
+            return []
+    out = [f"{packages[0]}/__init__.py"]
+    if imp.symbol and f"{packages[0]}/{imp.symbol}.py" in by_file:
+        out.append(f"{packages[0]}/{imp.symbol}.py")
+    return out
+
+
 def _test_stem(path, lang):
     base = os.path.basename(path)
     for pattern, group in _TEST_STEM_PATTERNS.get(lang, []):
@@ -252,6 +283,8 @@ def seed_tests(files, root=None):
     for test_ef, stem in tests:
         import_targets = set()
         for imp in test_ef.imports:
+            import_targets.update(
+                _py_package_targets(test_ef, imp, by_file))
             for kind, target in _module_targets(test_ef, imp, root, by_file):
                 table = by_file if kind == "file" else by_dir
                 if target in table:
