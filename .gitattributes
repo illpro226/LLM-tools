@@ -1,1 +1,5 @@
 * text=auto eol=lf
+# Windows batch files must check out with CRLF (cmd.exe misparses LF-only
+# batch files with labels/multi-line constructs)
+*.cmd text eol=crlf
+*.bat text eol=crlf
