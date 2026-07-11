@@ -89,8 +89,11 @@ def ensure_fresh(root, repoindex_cmd=None):
     (tools/repoindex/repoindex.py). Returns True if an update ran.
     """
     cmd = repoindex_cmd or os.environ.get("TESTMAP_REPOINDEX") or "repoindex"
-    if shutil.which(cmd) is not None:
-        argv = [cmd, "--root", root, "update"]
+    resolved = shutil.which(cmd)
+    if resolved is not None:
+        # Resolved path, not bare name: Windows PATH shims are .cmd files,
+        # which CreateProcess won't resolve from a bare name.
+        argv = [resolved, "--root", root, "update"]
     else:
         sibling = os.path.normpath(os.path.join(
             os.path.dirname(os.path.abspath(__file__)),

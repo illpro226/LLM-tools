@@ -1,5 +1,9 @@
 # codediff Changelog
 
+- 2026-07-11: v0.1.1 — the implicit `repoindex update` passes the
+  `shutil.which()`-resolved path to `subprocess` instead of the bare
+  command name (Windows `.cmd` PATH shims raise `FileNotFoundError` from
+  a bare name; same fix as rq v0.1.2 and testmap v0.1.1). 28 tests.
 - 2026-07-10: v0.1.0 — initial implementation. Symbol-level diff on
   `repoindex.extract` (both sides), sections API/Behavior/Removed/
   Mechanical, rename detection, flat explainable risk flags with

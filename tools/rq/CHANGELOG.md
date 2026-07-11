@@ -1,5 +1,12 @@
 # rq Changelog
 
+- 2026-07-11: v0.1.2 — the freshness guard passes the `shutil.which()`-
+  resolved path to `subprocess` instead of the bare command name: on
+  Windows the PATH entry for `repoindex` is a `.cmd` shim, which
+  `CreateProcess` won't resolve from a bare name, so every `rq` query
+  crashed with `FileNotFoundError` precisely when the suite was installed
+  on PATH as intended. Same fix applied to testmap v0.1.1 and codediff
+  v0.1.1. 41 tests.
 - 2026-07-10: v0.1.1 — shared flags (`--root`, `--json`, `--max-tokens`,
   `--repoindex`, `--no-update`) are now accepted before the subcommand as
   well as after it; when given in both positions the post-subcommand value

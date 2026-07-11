@@ -1,6 +1,6 @@
 # rq Status
 
-Implemented (v0.1.0) and passing tests.
+Implemented (v0.1.2) and passing tests.
 
 - `rq.py` — single-file stdlib CLI over `.repoindex/index.db`. Eight
   subcommands: `whouses`, `implements`, `inherits`, `impact`, `publicapi`,
@@ -29,7 +29,7 @@ Implemented (v0.1.0) and passing tests.
   cycles print smallest first.
 - Exit codes: 0 success, 1 symbol not found, 2 no index and repoindex
   unavailable.
-- Tests: `tests/test_rq.py` (39 tests) against the shared repoindex fixture
+- Tests: `tests/test_rq.py` (41 tests) against the shared repoindex fixture
   repo (built via the repoindex package) plus a hand-seeded database
   (inheritance cycle, external base, two import cycles of different sizes,
   a coverage-tagged file). Covers every subcommand's ground truth, the

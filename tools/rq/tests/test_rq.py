@@ -255,7 +255,10 @@ def test_freshness_guard_runs_repoindex_update(capsys, indexed_repo,
     monkeypatch.setattr(rq.shutil, "which", lambda cmd: "/usr/bin/" + cmd)
     code, _, _ = run(capsys, "publicapi", "--root", str(indexed_repo))
     assert code == 0
-    assert calls == [["repoindex", "--root", str(indexed_repo), "update"]]
+    # argv must carry the which()-resolved path, not the bare name --
+    # Windows PATH shims are .cmd files CreateProcess can't resolve.
+    assert calls == [["/usr/bin/repoindex", "--root", str(indexed_repo),
+                      "update"]]
 
 
 def test_no_update_skips_the_freshness_guard(capsys, indexed_repo,

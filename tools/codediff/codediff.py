@@ -36,7 +36,7 @@ try:
 except ImportError:  # pragma: no cover - Python < 3.11
     tomllib = None
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 DEFAULT_KEYWORDS = ("auth", "crypto", "payment", "migration",
                     "secret", "password", "credential")
@@ -513,8 +513,11 @@ def ensure_fresh(root, repoindex_cmd=None):
     resolution order as rq/testmap: flag, env, PATH, sibling checkout."""
     cmd = repoindex_cmd or os.environ.get("CODEDIFF_REPOINDEX_BIN") \
         or "repoindex"
-    if shutil.which(cmd) is not None:
-        argv = [cmd, "--root", root, "update"]
+    resolved = shutil.which(cmd)
+    if resolved is not None:
+        # Resolved path, not bare name: Windows PATH shims are .cmd files,
+        # which CreateProcess won't resolve from a bare name.
+        argv = [resolved, "--root", root, "update"]
     else:
         sibling = os.path.normpath(os.path.join(
             os.path.dirname(os.path.abspath(__file__)),

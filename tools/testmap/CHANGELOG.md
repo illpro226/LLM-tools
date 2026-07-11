@@ -1,6 +1,10 @@
 # testmap Changelog
 
 - 2026-07-06: Added initial documentation scaffold.
+- 2026-07-11: v0.1.1 — the freshness guard passes the `shutil.which()`-
+  resolved path to `subprocess` instead of the bare command name (Windows
+  `.cmd` PATH shims raise `FileNotFoundError` from a bare name; same fix
+  as rq v0.1.2 and codediff v0.1.1). 22 tests.
 - 2026-07-10: v0.1.0 — implemented map mode (git/explicit changed-file set;
   coverage, changed-test, convention, and depth-limited import layers as a
   union tagged by most-trusted source; per-framework run commands; --json,
