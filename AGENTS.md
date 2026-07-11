@@ -1,50 +1,71 @@
-# Repository Guidelines
+# AGENTS.md — LLM-tools
 
-## Project Structure & Module Organization
-This repository is currently a design/specification workspace. The root `START.md` describes the tool suite and the expected layout for future work.
+LLM-tools is a suite of small CLI utilities that let a coding agent spend
+fewer tokens per task: never put raw, bulky content into context when a
+compressed, targeted view will do. All eleven tools are implemented and
+tested. `START.md` describes each tool; `INVARIANTS.md` holds the rules
+every tool must keep; each tool lives in `tools/<name>/` with its own
+docs (`STATUS.md`, `CHANGELOG.md`, `DECISIONS.md`) and `tests/`.
 
-- `tools/<name>/`: one standalone CLI tool per directory
-- `.repoindex/`: shared SQLite index used by relationship-based tools
-- `tests/` or tool-local `tests/`: fixture-driven tests for each command
-- Generated or cached artifacts should stay out of version control
+## Use these tools instead of built-ins
 
-## Build, Test, and Development Commands
-There is no committed build system yet, so commands should be added per tool. Prefer small, explicit entry points such as:
+The section below is self-contained — copy it into any project's
+AGENTS.md (or your agent's global instructions) to adopt the suite there.
 
-- `python -m pytest`: run Python tests for a tool
-- `go test ./...`: run Go tests when a tool is implemented in Go
-- `python -m tools.<name>` or `./tools/<name>/<cli>`: run the CLI locally
+The tools are on PATH via the `.cmd` shims in `bin\` (Windows /
+PowerShell; new shells only). If a name isn't recognized, call the shim
+by full path or run `python tools\<name>\<name>.py` from this repo.
 
-Document any new tool-specific commands in that tool’s README or usage notes.
+| Instead of | Use | Example |
+|---|---|---|
+| Reading a whole file for one function or section | `xread` | `xread app.py --symbol Login.validate`, `xread doc.md --headings`, then `--query "text"` or `--lines 40-80 --scope` |
+| `ls -R` / reading many files to get oriented | `repomap` | `repomap . --focus src/auth` |
+| Raw `grep`/`rg` dumps | `sgrep` (needs `rg` on PATH) | `sgrep "retry" src --counts-only` |
+| Running a build/test and reading the full log | `runlite` | `runlite -- python -m pytest -q` |
+| `cat` on JSON/YAML/JSONL/XML/CSV/logs | `structo` | `structo data.json --path items[0]` |
+| Raw `git diff` / `git log` / `git status` | `gitbrief` | `gitbrief`, `gitbrief hunks`, `gitbrief show FILE`, `gitbrief log`, `gitbrief pr main` |
+| Re-reading hunks to judge what a change means | `codediff` | `codediff --staged` (API/behavior/removed/mechanical + risk flags) |
+| Grepping for call sites and relationships | `rq` (auto-refreshes the index) | `rq whouses LoginManager`, `rq impact save_user`, `rq deadcode`, `rq untested`, `rq publicapi src` |
+| Running the whole test suite after a small change | `testmap` | `testmap` (changed files → covering tests + run command); `testmap record -- pytest` for exact coverage |
+| Guessing what is cheap or expensive to read | `tokq` | `tokq FILE`, `tokq dir .`, `tokq lint docs\` |
 
-## Coding Style & Naming Conventions
-Follow the conventions in `START.md`:
+Shared behavior you can rely on: output is plain, deterministic text
+meant to be read by an LLM; every claim line carries a `path:line` you
+can follow up with `xread`; every tool accepts `--max-tokens N` and
+degrades by summarizing harder, never truncating mid-thought. `rq`,
+`testmap`, and `codediff` query the shared `.repoindex/index.db` and run
+`repoindex update` automatically first (`repoindex build` once in a new
+repo; `rq`/`testmap` exit 2 when no index exists and repoindex is
+unavailable). Confidence in index-backed answers is two-valued —
+`resolved` or `heuristic` — treat heuristic edges as leads, not facts.
+Caveats: `sgrep` errors clearly if `rg` is absent; `tokq` falls back to
+a bytes-based estimate without `tiktoken` and says so.
 
-- Prefer Python or Go for new tools
-- Keep output plain text, deterministic, and stable in ordering
-- Support `--max-tokens N` or `--max-bytes` where applicable
-- Use lowercase, descriptive tool names like `xread`, `tokq`, and `gitbrief`
-- Keep dependencies minimal and startup fast
+## Working in this repo
 
-Use the formatter and linter that match the implementation language (`ruff`/`black` for Python, `gofmt` for Go).
+- Dogfood the suite while working here; it is the field test fixtures
+  can't provide. When a built-in was genuinely easier or a tool's output
+  missed what you needed, file it in `docs/known-issues/` (one file per
+  issue: what breaks, when, expected, workaround).
+- Each tool is self-contained: `cd tools\<name>` then `python -m pytest`.
+  All are stdlib-only Python; every tool except `repoindex` (a package)
+  is a single file.
+- A change to a tool's behavior updates its `CHANGELOG.md` and
+  `STATUS.md` (version, test count) in the same commit; cross-tool rules
+  live in `INVARIANTS.md`, and breaking one needs a decision record in
+  `docs/decisions/`, not just a PR. Stated test counts also appear in the
+  root `CLAUDE.md` — keep them in sync.
+- Run `tokq lint` on any doc you edit before finishing.
 
-## Testing Guidelines
-Use fixture-based tests that exercise real command output. Prefer small, reproducible inputs over large fixtures.
+## Style, tests, commits
 
-- Name tests after behavior, not implementation details
-- Cover cap/trim behavior for token-limited output
-- Verify deterministic ordering and stable formatting
-- Add regression tests for parsing, ranking, and fallback paths
-
-## Commit & Pull Request Guidelines
-No git history is available in this checkout, so there is no repository-specific commit convention to mirror. Use short, imperative commit subjects, for example: `add xread token cap tests`.
-
-Pull requests should include:
-
-- A brief summary of the tool or change
-- Commands run for verification
-- Notes on any new CLI flags, file locations, or generated artifacts
-- Screenshots only if a UI is added later
-
-## Security & Configuration Tips
-Do not commit local caches, indexes, or machine-specific paths. If a tool writes `.repoindex/index.db` or similar generated state, keep it ignored and rebuildable.
+- Keep output deterministic: stable ordering, no ANSI color, no
+  timestamps in normal output; support `--max-tokens` on anything that
+  can grow (see `INVARIANTS.md` for the full list).
+- Tests are fixture-based and assert real command output; name them
+  after behavior; cover cap/degrade paths and determinism.
+- Commit subjects are short and imperative, e.g.
+  `fix xread --query markdown section swallowing (xread v0.1.1)`.
+- PRs note the commands run for verification and any new flags or
+  generated artifacts. Never commit `.repoindex/` or other rebuildable
+  state.
