@@ -1,2 +1,3 @@
 #!/bin/sh
-exec python "$(dirname "$0")/../tools/repoindex/repoindex.py" "$@"
+PY=$(command -v python || command -v python3) || { echo "repoindex: no python interpreter found" >&2; exit 127; }
+exec "$PY" "$(dirname "$0")/../tools/repoindex/repoindex.py" "$@"

@@ -1,24 +1,29 @@
-# adoption: Codex ignores the AGENTS.md tool section entirely
+# adoption: Codex session had no suite on PATH (initially misread as ignoring AGENTS.md)
 
-**Status: OPEN (2026-07-11).**
+**RESOLVED (root cause) 2026-07-11:** Codex itself diagnosed it — the
+session's environment did not have `bin\` on PATH, so every bare-name
+tool call was unresolvable. The user-PATH entry added 2026-07-10 only
+reaches shells started after it; Codex inherited a stale or different
+environment. The original framing of this issue ("Codex ignores the
+AGENTS.md tool section") attributed to instruction non-adherence what
+was actually an environment gap. The instruction-adherence question is
+back to **untested** — it needs a clean rerun in a session where
+`Get-Command xread` (or `command -v xread`) actually resolves.
 
-- **What breaks:** running Codex on another repo whose AGENTS.md carried
-  the LLM-tools section, it used built-ins (whole-file reads, raw
-  grep/diff) and never invoked a suite tool. The instruction channel —
-  the only channel Codex currently has to the suite — produced zero
-  adoption in a real session.
-- **When it happens:** any Codex session; there is no hook system to
-  enforce redirection the way Claude Code's PreToolUse guard does, so
-  a "prefer these tools" section competes with the model's trained
-  defaults and loses under task pressure.
-- **Expected behavior:** the agent reaches for `xread`/`sgrep`/`gitbrief`
-  for the jobs the table maps.
-- **Workarounds / candidate fixes, in escalating strength:**
-  1. Confirm AGENTS.md was actually loaded (session log) before blaming
-     wording; test with the section moved to the top, imperative,
-     prohibition-first ("Do NOT read whole files — run `xread`...").
-  2. Mirror the section into `~/.codex/AGENTS.md` so it applies globally.
-  3. An MCP adapter exposing the high-value tools as native tool schemas
-     — tool-list visibility does not depend on instruction adherence.
-     This is adoption infrastructure, not a 12th tool, but per 0003 it
-     should get its own decision record before being built.
+- **What broke:** first Codex dogfood session used built-ins throughout;
+  zero suite tool invocations.
+- **Actual cause:** `bin\` absent from the session PATH. Tools were
+  invisible, not declined.
+- **Residual instruction finding (weak):** AGENTS.md's fallback line
+  ("if a name isn't recognized, call the shim by full path or run
+  `python tools\<name>\<name>.py`") was not followed either — but an
+  agent fighting PowerShell friction (see session context) may never
+  have surfaced the tool names at all. Not strong enough evidence to
+  act on.
+- **Follow-ups:**
+  1. Rerun the adoption test with a verified environment (have the
+     session run `command -v xread` first as a canary).
+  2. Consider pinning PATH in Codex's own config so it can't inherit a
+     stale environment.
+  3. The MCP-adapter escalation stays on the table but should wait for
+     the clean rerun — it may be unnecessary.
