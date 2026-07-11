@@ -5,8 +5,17 @@ records calls through names bound in the enclosing function (assignments,
 parameters, nested defs, `except`/`nonlocal` bindings) as `<dynamic>`, so
 the resolve pass keeps them heuristic instead of binding them to an
 unrelated repo-wide symbol; the repomap.py:461 phantom ref is gone.
-Residual: the JS/TS and Go heuristic extractors don't track locals, so the
-same class of phantom ref remains possible in those languages.
+
+**RESOLVED 2026-07-10 (repoindex v0.1.4), for JS/TS and Go:** the heuristic
+extractors now track function-local bindings the same way — params,
+receiver, `const`/`let`/`var`, `:=`/`var`, nested function declarations,
+catch and func-literal bindings, with JS/TS anonymous callbacks
+(`describe('x', () => {`) opening a shadow region too. Collection is
+over-approximated in the safe direction: a shadowed call becomes
+`<dynamic>` (heuristic), never a false `resolved`. Residual gaps are
+narrow: bindings the line scanners can't see (e.g. a JS multi-line
+destructuring, a Go func-literal param list with nested parens) can still
+leak a bare-name ref, and dotted calls only check their first segment.
 
 **What breaks:** a call through a local variable that shares a name with a
 repo-wide symbol is recorded as a `resolved` ref to that unrelated symbol.

@@ -493,6 +493,102 @@ def test_python_local_assignment_shadows_module_var_refs():
     assert [w.line for w in writes] == [9]  # only the `global x` write
 
 
+def test_ts_local_shadowing_does_not_resolve():
+    # Same known issue as the Python case, JS/TS side: a call through a
+    # function-local binding must not resolve to an unrelated repo-wide
+    # symbol of the same name.
+    from repoindex import resolve
+    lib = extract.extract(
+        "other/extractors.ts",
+        "export function extract(src: string) {\n  return src;\n}\n")
+    use = extract.extract(
+        "tool/main.ts",
+        "function pick() {\n  return null;\n}\n"
+        "export function run(src) {\n"
+        "  const extract = pick();\n"
+        "  return extract(src);\n"
+        "}\n")
+    rows = resolve.resolve_refs([lib, use])
+    assert not [r for r in rows
+                if r.file == "tool/main.ts" and r.to_name == "extract"]
+    dyn = [r for r in rows
+           if r.file == "tool/main.ts" and r.to_name == "<dynamic>"]
+    assert dyn and all(r.confidence == "heuristic" for r in dyn)
+    # the un-shadowed call on the binding line itself is still a real ref
+    assert [r for r in rows
+            if r.file == "tool/main.ts" and r.to_name == "pick"]
+
+
+def test_ts_call_through_parameter_is_dynamic():
+    ef = extract.extract(
+        "m.ts", "export function apply(fn, x) {\n  return fn(x);\n}\n")
+    calls = {(r.to_name, r.kind) for r in ef.refs}
+    assert ("fn", "call") not in calls
+    assert ("<dynamic>", "call") in calls
+
+
+def test_ts_one_liner_arrow_param_is_dynamic():
+    ef = extract.extract("m.ts", "export const call = (fn) => fn(1);\n")
+    calls = {r.to_name for r in ef.refs if r.kind == "call"}
+    assert "fn" not in calls
+    assert "<dynamic>" in calls
+
+
+def test_ts_import_binding_is_not_shadowed():
+    src = ("import { add } from './mathutil';\n"
+           "export function run() {\n  return add(1, 2);\n}\n")
+    ef = extract.extract("m.ts", src)
+    assert ("add", "call") in {(r.to_name, r.kind) for r in ef.refs}
+
+
+def test_ts_local_in_anonymous_callback_is_dynamic():
+    src = ("describe('x', () => {\n"
+           "  const extract = pick();\n"
+           "  extract(1);\n"
+           "});\n")
+    ef = extract.extract("m.test.ts", src)
+    calls = {(r.to_name, r.line) for r in ef.refs if r.kind == "call"}
+    assert ("extract", 3) not in calls
+    assert ("<dynamic>", 3) in calls
+    assert ("pick", 2) in calls
+
+
+def test_go_local_shadowing_call_is_dynamic():
+    src = ("package m\n\n"
+           "func pick() func(int) int {\n"
+           "\treturn nil\n"
+           "}\n\n"
+           "func run(x int) int {\n"
+           "\textract := pick()\n"
+           "\treturn extract(x)\n"
+           "}\n")
+    ef = extract.extract("m.go", src)
+    calls = {(r.to_name, r.line) for r in ef.refs if r.kind == "call"}
+    assert ("extract", 9) not in calls
+    assert ("<dynamic>", 9) in calls
+    assert ("pick", 8) in calls
+
+
+def test_go_call_through_param_or_receiver_is_dynamic():
+    src = ("package m\n\n"
+           "func (s *Server) apply(fn func()) {\n"
+           "\tfn()\n"
+           "\ts.draw()\n"
+           "}\n")
+    ef = extract.extract("m.go", src)
+    calls = {r.to_name for r in ef.refs if r.kind == "call"}
+    assert calls == {"<dynamic>"}
+
+
+def test_go_import_qualified_call_still_resolves(repo):
+    cli.build(str(repo))
+    conn = _connect(repo)
+    rows = _rows(conn, "SELECT to_symbol, confidence FROM refs "
+                        "WHERE from_file='go/app/app.go' "
+                        "AND to_name='mathutil.Add'")
+    assert rows == [("go/mathutil/mathutil.go::Add", "resolved")]
+
+
 def test_python_whole_module_import_resolves():
     from repoindex import resolve
     lib = extract.extract("lib.py", "def add(a, b):\n    return a + b\n")

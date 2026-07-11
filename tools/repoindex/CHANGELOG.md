@@ -1,6 +1,17 @@
 # repoindex Changelog
 
 - 2026-07-06: Added initial documentation scaffold.
+- 2026-07-10: v0.1.4 — the JS/TS and Go extractors now track function-local
+  bindings the way the Python one has since v0.1.2: calls through names
+  bound in the enclosing function (params, receiver, `const`/`let`/`var`,
+  `:=`/`var`, nested function declarations, catch/func-literal bindings)
+  become `<dynamic>` instead of resolving to an unrelated repo-wide symbol
+  of the same name. JS/TS also opens a shadow region for anonymous
+  callbacks (`describe('x', () => {`). Binding collection is deliberately
+  over-approximated — a downgraded ref stays `heuristic`; it can never
+  create a false `resolved` (closes known-issue
+  `repoindex-local-var-shadowing-resolved-ref` for all three languages).
+  56 tests.
 - 2026-07-10: v0.1.3 — `update` no longer wipes `testmap record`'s
   `source=coverage` rows when rebuilding derived tables: coverage links are
   recorded facts, not re-derivable from source, so they now persist until

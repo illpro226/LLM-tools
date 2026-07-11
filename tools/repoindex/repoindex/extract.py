@@ -387,6 +387,53 @@ _JS_KEYWORDS = {
     "if", "for", "while", "switch", "catch", "function", "return",
     "typeof", "new", "in", "of", "do", "else", "super",
 }
+_IDENT_RE = re.compile(r"[A-Za-z_$][\w$]*")
+_TS_LOCAL_DECL = re.compile(r"\b(?:const|let|var)\s+([^=;]+)")
+_TS_ARROW_PARAM = re.compile(
+    r"(?:\(([^()]*)\)|([A-Za-z_$][\w$]*))\s*=>")
+_TS_NESTED_FUNC = re.compile(r"\bfunction\s*\*?\s*([A-Za-z_$][\w$]*)")
+_TS_NESTED_CLASS = re.compile(r"\bclass\s+([A-Za-z_$][\w$]*)")
+_TS_CATCH = re.compile(r"\bcatch\s*\(\s*([A-Za-z_$][\w$]*)")
+_TS_ANON_FUNC = re.compile(r"\bfunction\s*\*?\s*\(")
+
+
+def _paren_idents(code, start):
+    """Identifiers inside the paren group opening at code[start] == '('."""
+    depth = 0
+    for j in range(start, len(code)):
+        ch = code[j]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return set(_IDENT_RE.findall(code[start + 1:j]))
+    return set(_IDENT_RE.findall(code[start + 1:]))
+
+
+def _ts_line_bindings(code):
+    """Names a line binds locally (over-approximated, like the Python
+    visitor's shadow set): const/let/var declarations, arrow-function
+    params, nested function/class declarations, catch bindings. Erring
+    toward heuristic, never toward a false `resolved`."""
+    bound = set()
+    for m in _TS_LOCAL_DECL.finditer(code):
+        bound.update(_IDENT_RE.findall(m.group(1)))
+    for m in _TS_ARROW_PARAM.finditer(code):
+        if m.group(1) is not None:
+            bound.update(_IDENT_RE.findall(m.group(1)))
+        else:
+            bound.add(m.group(2))
+    for m in _TS_NESTED_FUNC.finditer(code):
+        bound.add(m.group(1))
+        idx = code.find("(", m.end())
+        if idx != -1:
+            bound.update(_paren_idents(code, idx))
+    for m in _TS_NESTED_CLASS.finditer(code):
+        bound.add(m.group(1))
+    for m in _TS_CATCH.finditer(code):
+        bound.add(m.group(1))
+    return bound
 
 
 def _split_names(blob):
@@ -415,6 +462,23 @@ def _extract_ts(path, source, lang):
     depth = 0
     class_stack = []  # (qualname, end-detection depth)
     state = {"comment": False}
+    # Function-region shadow tracking (known-issue
+    # repoindex-local-var-shadowing-resolved-ref, Python fixed in v0.1.2):
+    # while inside a function body, call refs are buffered and names bound
+    # anywhere in that body are collected; at region close, calls through
+    # bound names become <dynamic> so the resolve pass keeps them heuristic
+    # instead of binding them to an unrelated repo-wide symbol.
+    region = None  # {"start": depth-at-open, "bound": set()}
+    buffer = []
+
+    def _flush_region():
+        nonlocal region
+        for r in buffer:
+            if r.to_name in region["bound"]:
+                r.to_name = "<dynamic>"
+        refs.extend(buffer)
+        buffer.clear()
+        region = None
 
     for i, raw in enumerate(lines, 1):
         # Import paths are string literals -- match them against the raw
@@ -440,6 +504,7 @@ def _extract_ts(path, source, lang):
         declared_name = None  # this line's own declared name, if any --
         # excluded from call-ref scanning below so a declaration line
         # (e.g. "function buildShapes() {") isn't also read as a call.
+        func_decl = False  # this line opens a function/method body
         if depth == 0:
             m = _TS_CLASS.match(code)
             if m:
@@ -474,6 +539,7 @@ def _extract_ts(path, source, lang):
                     m = _TS_FUNC.match(code) or _TS_CONST_FUNC.match(code)
                     if m:
                         declared_name = m.group(1)
+                        func_decl = True
                         qn = f"{path}::{m.group(1)}"
                         symbols.append(Symbol(qualname=qn, kind="func",
                                                file=path, line_start=i,
@@ -483,6 +549,7 @@ def _extract_ts(path, source, lang):
             m = _TS_METHOD.match(code)
             if m and m.group(1) not in ("if", "for", "while", "switch", "constructor"):
                 declared_name = m.group(1)
+                func_decl = True
                 cname = class_stack[-1][0]
                 qn = f"{path}::{cname}.{m.group(1)}"
                 symbols.append(Symbol(qualname=qn, kind="method", file=path,
@@ -490,18 +557,40 @@ def _extract_ts(path, source, lang):
                                        exported=True))
             elif m and m.group(1) == "constructor":
                 declared_name = "constructor"
+                func_decl = True
+
+        if region is not None:
+            region["bound"] |= _ts_line_bindings(code)
+        elif func_decl or _TS_ARROW_PARAM.search(code) or _TS_ANON_FUNC.search(code):
+            # A function body starts here: a declared function/method, or
+            # an anonymous callback (`describe('x', () => {`). The declared
+            # symbol itself is not a shadow (a recursive call to it is a
+            # real ref); its params live in the decl line's first paren
+            # group. Arrow params and decl-line locals come from the
+            # generic scan.
+            bound = _ts_line_bindings(code) - {declared_name}
+            if func_decl:
+                idx = code.find("(")
+                if idx != -1:
+                    bound |= _paren_idents(code, idx) - {declared_name}
+            region = {"start": depth, "bound": bound}
 
         for call in _CALL_RE.finditer(code):
             name = call.group(1)
             if name in _JS_KEYWORDS or name == declared_name:
                 continue
-            refs.append(Ref(file=path, line=i, to_name=name, kind="call"))
+            ref = Ref(file=path, line=i, to_name=name, kind="call")
+            (buffer if region is not None else refs).append(ref)
 
         new_depth = depth + code.count("{") - code.count("}")
         while class_stack and new_depth <= class_stack[-1][1]:
             class_stack.pop()
         depth = max(0, new_depth)
+        if region is not None and depth <= region["start"]:
+            _flush_region()
 
+    if region is not None:
+        _flush_region()
     return ExtractedFile(path=path, language=lang, symbols=symbols,
                           refs=refs, imports=imports, inherits=inherits,
                           implements=implements)
@@ -523,6 +612,59 @@ _GO_KEYWORDS = {"if", "for", "switch", "return", "range", "go", "defer",
 
 
 _GO_IFACE_METHOD = re.compile(r"^([A-Za-z_]\w*)\s*\(")
+_GO_SHORT_DECL = re.compile(r"((?:[A-Za-z_]\w*\s*,\s*)*[A-Za-z_]\w*)\s*:=")
+_GO_VAR_DECL = re.compile(r"\bvar\s+((?:[A-Za-z_]\w*\s*,\s*)*[A-Za-z_]\w*)")
+_GO_FUNC_LIT = re.compile(r"\bfunc\s*\(([^()]*)\)")
+_GO_IDENT = re.compile(r"[A-Za-z_]\w*")
+
+
+def _go_first_idents(blob):
+    """First identifier of each comma-separated segment: the binding
+    position in Go param/receiver/named-result lists ('a, b int' -> a, b;
+    'w http.ResponseWriter' -> w). Deliberately not every identifier --
+    type names like an imported package in 'm mathutil.Calc' must not be
+    treated as shadowed."""
+    out = set()
+    for part in blob.split(","):
+        m = _GO_IDENT.search(part)
+        if m:
+            out.add(m.group(0))
+    return out
+
+
+def _go_decl_bindings(stripped):
+    """Names a func decl line binds: receiver, params, named results.
+    Balance-scans top-level paren groups so nested types like
+    `func(fn func())` don't hide the binding position."""
+    bound = set()
+    depth = 0
+    start = None
+    for j, ch in enumerate(stripped):
+        if ch == "(":
+            if depth == 0:
+                start = j + 1
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0 and start is not None:
+                blob = stripped[start:j]
+                if blob.strip():
+                    bound |= _go_first_idents(blob)
+                start = None
+    return bound
+
+
+def _go_body_bindings(code):
+    """Names a body line binds: short var decls (incl. for-range and
+    if-init), var declarations, func-literal params."""
+    bound = set()
+    for m in _GO_SHORT_DECL.finditer(code):
+        bound.update(_GO_IDENT.findall(m.group(1)))
+    for m in _GO_VAR_DECL.finditer(code):
+        bound.update(_GO_IDENT.findall(m.group(1)))
+    for m in _GO_FUNC_LIT.finditer(code):
+        bound |= _go_first_idents(m.group(1))
+    return bound
 
 
 def _extract_go(path, source):
@@ -531,6 +673,19 @@ def _extract_go(path, source):
     go_interfaces = {}
     in_import_block = False
     current_func = None  # (qualname, receiver_type_or_None)
+    # Same shadow tracking as _extract_ts: calls inside a function are
+    # buffered; a call whose first segment is a name bound in that function
+    # (receiver, param, :=, var, func-literal param) becomes <dynamic>.
+    bound = set()
+    buffer = []
+
+    def _flush_func():
+        for r in buffer:
+            if r.to_name.split(".", 1)[0] in bound:
+                r.to_name = "<dynamic>"
+        refs.extend(buffer)
+        buffer.clear()
+        bound.clear()
 
     for i, raw in enumerate(lines, 1):
         stripped = raw.strip()
@@ -556,17 +711,19 @@ def _extract_go(path, source):
 
         if raw[:1] in (" ", "\t"):
             if current_func:
+                bound.update(_go_body_bindings(code))
                 for call in _GO_CALL_RE.finditer(code):
                     first, second = call.group(1), call.group(2)
                     if first in _GO_KEYWORDS:
                         continue
                     name = f"{first}{second}" if second else first
-                    refs.append(Ref(file=path, line=i, to_name=name,
-                                    kind="call"))
+                    buffer.append(Ref(file=path, line=i, to_name=name,
+                                      kind="call"))
             continue
 
         m = _GO_FUNC.match(stripped)
         if m:
+            _flush_func()
             receiver, fname = m.group(1), m.group(2)
             if receiver:
                 qn = f"{path}::{receiver}.{fname}"
@@ -579,8 +736,11 @@ def _extract_go(path, source):
                                        line_start=i, line_end=i,
                                        exported=fname[:1].isupper()))
             current_func = (qn, receiver)
+            bound.update(_go_decl_bindings(stripped))
             continue
 
+        if current_func:
+            _flush_func()
         current_func = None
         m = _GO_TYPE.match(stripped)
         if m:
@@ -616,6 +776,7 @@ def _extract_go(path, source):
                                    line_start=i, line_end=i,
                                    exported=name[:1].isupper()))
 
+    _flush_func()
     return ExtractedFile(path=path, language="go", symbols=symbols,
                           refs=refs, imports=imports,
                           extra={"go_interfaces": go_interfaces} if go_interfaces else {})
