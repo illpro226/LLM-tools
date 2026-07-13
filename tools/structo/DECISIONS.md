@@ -37,3 +37,25 @@ stable, and every bit as deterministic; array *lengths* are always exact
 because elements past the sample are still counted, only their schema
 merge is skipped. The `~` marker also covers the capped distinct counter
 (CSV) and the capped template table (logs).
+
+## ADR-004: JSONL record addressing and a raw-value mode — Accepted (2026-07-12)
+
+Context: docs/known-issues/structo-jsonl-no-record-indexing.md — there was
+no way to zoom into record N of a JSONL file (`--path` matched inside every
+record), and schema-only output made extraction tasks ("give me this one
+string field") fall back to hand-written scripts.
+Decision: a leading `[N]` path segment on a JSONL file selects record N
+(the file as a virtual array; N counts parsed records, matching the
+summary's record count), with the rest of the path applied inside it. A
+new `--raw` flag prints the exact value at `--path`: strings verbatim,
+everything else as JSON.
+Consequences: on the rare JSONL whose records are themselves arrays, a
+leading `[N]` no longer means "element N of each record" — record
+addressing wins. Streaming (ADR-001) is preserved: JSONL raw parses one
+line, JSON raw uses a full-fidelity tokenizer mode (`json_events(fh,
+full=True)` — decoded escapes, uncapped strings) and materializes only the
+target subtree, YAML events were lossless already. The schema path is
+untouched (capped strings are fine for examples). `--raw` with
+`--max-tokens` refuses with exit 2 instead of truncating — an exact value
+can't be summarized harder, and truncating mid-value would violate the
+suite output invariant; the cap keeps full force in schema mode.

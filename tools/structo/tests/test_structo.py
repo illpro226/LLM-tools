@@ -155,6 +155,96 @@ def test_path_on_csv_errors(capsys):
     assert "--path zooms into" in err
 
 
+def test_path_jsonl_record_index(capsys):
+    out = ok([fx("sample.jsonl"), "--path", "[1]"], capsys)
+    assert "record 1" in out
+    lines = norm(out)
+    assert any(l.startswith("user: str 100%") for l in lines)
+    assert not any(l.startswith("email:") for l in lines)
+
+
+def test_path_jsonl_record_index_with_subpath(capsys):
+    out = ok([fx("sample.jsonl"), "--path", "[0].user"], capsys)
+    assert '"alice"' in out
+    assert "age" not in out
+
+
+def test_path_jsonl_record_out_of_range(capsys):
+    code, out, err = run([fx("sample.jsonl"), "--path", "[9]"], capsys)
+    assert code == 2
+    assert "record [9] not found" in err
+    assert "5 records" in err
+
+
+# -------------------------------------------------------------------- raw
+
+def test_raw_jsonl_string_field(capsys):
+    out = ok([fx("sample.jsonl"), "--raw", "--path", "[0].email"], capsys)
+    assert out == "a@x.io\n"
+
+
+def test_raw_jsonl_whole_record(capsys):
+    out = ok([fx("sample.jsonl"), "--raw", "--path", "[1]"], capsys)
+    assert json.loads(out) == {"user": "bob", "age": 44}
+
+
+def test_raw_jsonl_needs_record_index(capsys):
+    code, out, err = run([fx("sample.jsonl"), "--raw", "--path", "user"],
+                         capsys)
+    assert code == 2
+    assert "record index" in err
+
+
+def test_raw_json_scalars(capsys):
+    out = ok([fx("sample.json"), "--raw", "--path", "owner.email"], capsys)
+    assert out == "a@example.com\n"
+    out = ok([fx("sample.json"), "--raw", "--path", "items[2].id"], capsys)
+    assert out == "3\n"
+
+
+def test_raw_json_object_prints_json(capsys):
+    out = ok([fx("sample.json"), "--raw", "--path", "owner"], capsys)
+    assert json.loads(out) == {"name": "Alice", "email": "a@example.com"}
+
+
+def test_raw_json_full_fidelity(tmp_path, capsys):
+    text = "x" * 100 + "\nline2\ttab é 😀 \"quoted\" back\\slash"
+    doc = tmp_path / "doc.json"
+    doc.write_text(json.dumps({"a": [{"b": text}, {"b": "other"}]}),
+                   encoding="utf-8")
+    out = ok([str(doc), "--raw", "--path", "a[0].b"], capsys)
+    assert out == text + "\n"
+
+
+def test_raw_requires_path(capsys):
+    code, out, err = run([fx("sample.json"), "--raw"], capsys)
+    assert code == 2
+    assert "--raw needs --path" in err
+
+
+def test_raw_not_found(capsys):
+    code, out, err = run([fx("sample.json"), "--raw", "--path",
+                          "owner.phone"], capsys)
+    assert code == 2
+    assert "--path not found" in err
+
+
+def test_raw_refuses_max_tokens_overflow(capsys):
+    code, out, err = run([fx("sample.json"), "--raw", "--path", "items",
+                          "--max-tokens", "5"], capsys)
+    assert code == 2
+    assert "never truncates" in err
+
+
+@pytest.mark.skipif(not has_yaml(), reason="PyYAML not installed")
+def test_raw_yaml_values(capsys):
+    out = ok([fx("sample.yaml"), "--raw", "--path", "server.host"], capsys)
+    assert out == "localhost\n"
+    out = ok([fx("sample.yaml"), "--raw", "--path", "features[1].flag"],
+             capsys)
+    assert out == "3\n"
+
+
 # -------------------------------------------------------------------- csv
 
 def test_csv_columns(capsys):

@@ -3,6 +3,9 @@
 
     structo FILE              summarize (format auto-detected)
     structo FILE --path a.b[0].c   zoom into a JSON/YAML subtree
+                              (a leading [N] picks JSONL record N)
+    structo FILE --raw --path ...  print the exact value at --path
+                              (strings verbatim, else JSON)
     structo FILE --sample N   elements aggregated per array (default 10)
     structo FILE --max-tokens N    cap output (bytes/4), degrading:
                               drop samples/examples -> collapse deep
@@ -27,7 +30,7 @@ import os
 import re
 import sys
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 DEFAULT_SAMPLE = 10
 EXAMPLES_PER_NODE = 2
@@ -65,12 +68,20 @@ def fit(levels, budget):
 # ------------------------------------------------------- json event stream
 # Events: ("{",) ("}",) ("[",) ("]",) ("key", text) ("scalar", type, text)
 
-def json_events(fh):
+_UNESCAPE = {'"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f",
+             "n": "\n", "r": "\r", "t": "\t"}
+
+
+def json_events(fh, full=False):
+    """full=False caps strings at 64 chars and keeps escapes undecoded —
+    enough for schema examples. full=True decodes escapes (incl. \\uXXXX
+    surrogate pairs) and keeps whole strings, for --raw extraction."""
     stack = []
     expect_key = False
-    mode = 0          # 0 normal, 1 string, 2 number/literal
+    mode = 0          # 0 normal, 1 string, 2 number/literal, 3 \uXXXX
     esc = False
     sbuf, slen = [], 0
+    ubuf = []
     abuf = []
     out = []
 
@@ -129,9 +140,16 @@ def json_events(fh):
             if mode == 1:
                 if esc:
                     esc = False
-                    if slen < 64:
-                        sbuf.append(ch)
-                    slen += 1
+                    if full:
+                        if ch == "u":
+                            mode = 3
+                            ubuf.clear()
+                        else:
+                            sbuf.append(_UNESCAPE.get(ch, ch))
+                    else:
+                        if slen < 64:
+                            sbuf.append(ch)
+                        slen += 1
                 elif ch == "\\":
                     esc = True
                 elif ch == '"':
@@ -145,7 +163,7 @@ def json_events(fh):
                         if stack and stack[-1] == "o":
                             expect_key = True
                 else:
-                    if slen < 64:
+                    if full or slen < 64:
                         sbuf.append(ch)
                     slen += 1
             elif mode == 2:
@@ -154,6 +172,21 @@ def json_events(fh):
                 else:
                     end_atom()
                     normal(ch)
+            elif mode == 3:
+                ubuf.append(ch)
+                if len(ubuf) == 4:
+                    mode = 1
+                    try:
+                        cp = int("".join(ubuf), 16)
+                    except ValueError:
+                        cp = 0xFFFD
+                    if 0xDC00 <= cp <= 0xDFFF and sbuf \
+                            and 0xD800 <= ord(sbuf[-1]) <= 0xDBFF:
+                        hi = ord(sbuf[-1])       # pair with high surrogate
+                        sbuf[-1] = chr(0x10000 + ((hi - 0xD800) << 10)
+                                       + (cp - 0xDC00))
+                    else:
+                        sbuf.append(chr(cp))
             else:
                 normal(ch)
             if out:
@@ -712,11 +745,157 @@ def parse_path(spec):
     return segs
 
 
+# ---------------------------------------------------- raw value extraction
+
+_MISSING = object()
+
+
+def _scalar_value(kind, text):
+    if kind == "int":
+        try:
+            return int(text)
+        except ValueError:
+            return text
+    if kind == "float":
+        try:
+            return float(text)
+        except ValueError:
+            return text
+    if kind == "bool":
+        return text.lower() == "true"
+    if kind == "null":
+        return None
+    return text
+
+
+def _materialize(events, first):
+    """Build the Python value whose first event is `first`."""
+    if first[0] == "{":
+        obj = {}
+        for ev in events:
+            if ev[0] == "}":
+                break
+            obj[ev[1]] = _materialize(
+                events, next(events, ("scalar", "null", "null")))
+        return obj
+    if first[0] == "[":
+        arr = []
+        for ev in events:
+            if ev[0] == "]":
+                break
+            arr.append(_materialize(events, ev))
+        return arr
+    return _scalar_value(first[1], first[2])
+
+
+def _skip_value(events, first):
+    if first[0] not in ("{", "["):
+        return
+    depth = 1
+    for ev in events:
+        if ev[0] in ("{", "["):
+            depth += 1
+        elif ev[0] in ("}", "]"):
+            depth -= 1
+            if not depth:
+                return
+
+
+def _extract(events, first, segs):
+    if not segs:
+        return _materialize(events, first)
+    kind, want = segs[0]
+    if first[0] == "{" and kind == "k":
+        for ev in events:
+            if ev[0] == "}":
+                return _MISSING
+            child = next(events, ("scalar", "null", "null"))
+            if ev[1] == want:
+                return _extract(events, child, segs[1:])
+            _skip_value(events, child)
+    elif first[0] == "[" and kind == "i":
+        idx = 0
+        for ev in events:
+            if ev[0] == "]":
+                return _MISSING
+            if idx == want:
+                return _extract(events, ev, segs[1:])
+            _skip_value(events, ev)
+            idx += 1
+    return _MISSING
+
+
+def extract_value(events, segs):
+    """Value at segs in an event stream — materializes only that subtree."""
+    it = iter(events)
+    for first in it:
+        return _extract(it, first, segs)
+    return _MISSING
+
+
+def _walk(value, segs):
+    for kind, want in segs:
+        if kind == "k" and isinstance(value, dict) and want in value:
+            value = value[want]
+        elif kind == "i" and isinstance(value, list) \
+                and 0 <= want < len(value):
+            value = value[want]
+        else:
+            return _MISSING
+    return value
+
+
+def _nth_record(path, index):
+    """Record `index` of a JSONL file, streaming; unparsable lines are not
+    records (matching the summary's record count).
+
+    Returns (record, index) or (_MISSING, total records) if out of range."""
+    seen = 0
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if seen == index:
+                return record, seen
+            seen += 1
+    return _MISSING, seen
+
+
+def extract_raw(path, fmt, target):
+    """Exact value at --path; fully parses only what it returns."""
+    if fmt == "jsonl":
+        if target[0][0] != "i":
+            raise StructoError('--raw on jsonl needs a record index '
+                               '(--path "[N]" or "[N].a.b")')
+        record, seen = _nth_record(path, target[0][1])
+        if record is _MISSING:
+            raise StructoError("record [%d] not found (%s has %d records)"
+                               % (target[0][1], path, seen))
+        value = _walk(record, target[1:])
+    elif fmt == "json":
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            value = extract_value(json_events(fh, full=True), target)
+    else:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            value = extract_value(yaml_events(fh), target)
+    if value is _MISSING:
+        raise StructoError("--path not found in %s" % path)
+    return value
+
+
 # --------------------------------------------------------------------- CLI
 
 def summarize(path, fmt, sample, target):
     """Build (model, levels) for a detected format."""
     if fmt in ("json", "jsonl", "yaml"):
+        record_index = None
+        if fmt == "jsonl" and target and target[0][0] == "i":
+            record_index, target = target[0][1], target[1:] or None
         shape = Shape(sample, target)
         records = None
         if fmt == "json":
@@ -725,6 +904,12 @@ def summarize(path, fmt, sample, target):
         elif fmt == "yaml":
             with open(path, encoding="utf-8", errors="replace") as fh:
                 shape.feed(yaml_events(fh))
+        elif record_index is not None:
+            record, seen = _nth_record(path, record_index)
+            if record is _MISSING:
+                raise StructoError("record [%d] not found (%s has %d "
+                                   "records)" % (record_index, path, seen))
+            shape.feed(value_events(record))
         else:
             records = 0
             bad = 0
@@ -743,7 +928,9 @@ def summarize(path, fmt, sample, target):
         if target is not None and shape.hits == 0:
             raise StructoError("--path not found in %s" % path)
         extra = ""
-        if records is not None:
+        if record_index is not None:
+            extra = ", record %d" % record_index
+        elif records is not None:
             extra = ", records %d" % records
             if bad:
                 extra += ", %d unparsable line%s skipped" % (
@@ -772,7 +959,11 @@ def main(argv=None):
                     "instead of its content")
     parser.add_argument("file", metavar="FILE")
     parser.add_argument("--path", metavar="A.B[0].C",
-                        help="zoom into a JSON/YAML subtree")
+                        help="zoom into a JSON/YAML subtree (a leading "
+                             "[N] picks JSONL record N)")
+    parser.add_argument("--raw", action="store_true",
+                        help="print the exact value at --path instead of "
+                             "a schema (strings verbatim, else JSON)")
     parser.add_argument("--sample", type=int, metavar="N",
                         default=DEFAULT_SAMPLE,
                         help="array elements aggregated per array "
@@ -793,15 +984,28 @@ def main(argv=None):
                 raise StructoError("--path zooms into json/yaml/jsonl "
                                    "(%s detected as %s)" % (args.file, fmt))
             target = parse_path(args.path)
-        extra, levels = summarize(args.file, fmt, max(1, args.sample),
-                                  target)
-        header = "structo %s — format: %s (%s)%s" % (args.file, fmt, how,
-                                                     extra)
-        if target is not None:
-            header += ", path %s" % args.path
         budget = max(0, args.max_tokens)
-        wrapped = [lambda lv=lv: [header, ""] + lv() for lv in levels]
-        lines = fit(wrapped, budget)
+        if args.raw:
+            if target is None:
+                raise StructoError("--raw needs --path")
+            value = extract_raw(args.file, fmt, target)
+            text = value if isinstance(value, str) \
+                else json.dumps(value, ensure_ascii=False, indent=2)
+            if budget and _est(text.splitlines()) > budget:
+                raise StructoError(
+                    "value at %s is ~%d tokens (budget %d); --raw never "
+                    "truncates — narrow the path or drop --max-tokens"
+                    % (args.path, _est(text.splitlines()), budget))
+            lines = [text]
+        else:
+            extra, levels = summarize(args.file, fmt, max(1, args.sample),
+                                      target)
+            header = "structo %s — format: %s (%s)%s" % (args.file, fmt,
+                                                         how, extra)
+            if target is not None:
+                header += ", path %s" % args.path
+            wrapped = [lambda lv=lv: [header, ""] + lv() for lv in levels]
+            lines = fit(wrapped, budget)
     except StructoError as exc:
         print("structo: %s" % exc, file=sys.stderr)
         return 2
