@@ -38,7 +38,7 @@ shell commands.
   known-issue evidence — is met here by the two known-issue files above.
 - **The Codex-issue shelving is superseded on its own terms.** The MCP
   adapter idea was shelved in
-  `docs/known-issues/codex-ignores-agents-md-tool-section.md` because
+  `docs/known-issues/archive/codex-ignores-agents-md-tool-section.md` because
   that problem turned out to be PATH visibility, with revival gated on
   "adoption regresses in sessions with a verified PATH". The
   agent-defaults-to-builtins issue is exactly that: a verified-PATH

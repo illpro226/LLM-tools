@@ -40,7 +40,7 @@ merge is skipped. The `~` marker also covers the capped distinct counter
 
 ## ADR-004: JSONL record addressing and a raw-value mode — Accepted (2026-07-12)
 
-Context: docs/known-issues/structo-jsonl-no-record-indexing.md — there was
+Context: docs/known-issues/archive/structo-jsonl-no-record-indexing.md — there was
 no way to zoom into record N of a JSONL file (`--path` matched inside every
 record), and schema-only output made extraction tasks ("give me this one
 string field") fall back to hand-written scripts.
