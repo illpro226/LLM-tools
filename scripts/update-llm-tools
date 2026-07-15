@@ -1,0 +1,62 @@
+#!/bin/sh
+# Server-side counterpart to deploy-npmserv.sh: lives at /usr/local/bin/update-llm-tools
+# on npmserv (192.168.1.120), invoked by deploy-npmserv.sh over ssh. Mirrored here for
+# version history; to install a change, scp/copy this file over the one on the server
+# and re-run `chmod +x`.
+#
+# update-llm-tools [TARBALL]
+# Refresh /opt/des_stack/LLM-tools from a git-archive tarball (default /tmp/llm-tools.tar.gz).
+# Rotates the previous copy into /opt/des_stack/_deprecated (3 newest kept) and
+# preserves server-local additions under .claude/ and .savings/ across updates.
+set -e
+
+TAR="${1:-/tmp/llm-tools.tar.gz}"
+DEST=/opt/des_stack/LLM-tools
+BACKUPS=/opt/des_stack/_deprecated
+
+[ -f "$TAR" ] || { echo "update-llm-tools: no tarball at $TAR (scp one there first)" >&2; exit 1; }
+tar -tzf "$TAR" >/dev/null 2>&1 || { echo "update-llm-tools: $TAR is not a valid tar.gz" >&2; exit 1; }
+
+STAMP=$(date +%Y%m%d-%H%M%S)
+mkdir -p "$BACKUPS"
+if [ -d "$DEST" ]; then
+    mv "$DEST" "$BACKUPS/LLM-tools-$STAMP"
+fi
+
+mkdir -p "$DEST"
+tar -xzf "$TAR" -C "$DEST"
+
+# The git archive DOES contain .claude/settings.json and .claude/agents/
+# (both tracked); only .claude/settings.local.json and anything else placed
+# there by hand are server-local and absent from the tarball. Merge the
+# previous copy's extra entries in without clobbering what the archive just
+# shipped, and without nesting: a plain `cp -r SRC DEST` nests SRC one level
+# inside DEST when DEST already exists, which it does here precisely
+# because settings.json/agents/ are tracked - this bug is what produced the
+# .claude/.claude/.claude/... tree flattened on 2026-07-15.
+if [ -d "$BACKUPS/LLM-tools-$STAMP/.claude" ]; then
+    mkdir -p "$DEST/.claude"
+    cp -r --update=none "$BACKUPS/LLM-tools-$STAMP/.claude/." "$DEST/.claude/"
+fi
+
+# .savings/ and savings_record.md are guard-hook-generated, never in the
+# git archive, and never pre-exist in the fresh $DEST - a plain cp -r is
+# safe (no nesting risk since the destination doesn't already exist).
+if [ -d "$BACKUPS/LLM-tools-$STAMP/.savings" ]; then
+    cp -r "$BACKUPS/LLM-tools-$STAMP/.savings" "$DEST/.savings"
+fi
+if [ -f "$BACKUPS/LLM-tools-$STAMP/savings_record.md" ]; then
+    cp "$BACKUPS/LLM-tools-$STAMP/savings_record.md" "$DEST/savings_record.md"
+fi
+
+for t in tokq runlite xread sgrep repomap gitbrief structo repoindex rq testmap codediff; do
+    chmod +x "$DEST/tools/$t/$t.py"
+done
+
+rm -f "$TAR"
+
+# keep only the 3 newest backups
+ls -1dt "$BACKUPS"/LLM-tools-* 2>/dev/null | tail -n +4 | xargs -r rm -rf
+
+xread "$DEST/README.md" --headings >/dev/null
+echo "update-llm-tools: OK — deployed to $DEST (previous copy: $BACKUPS/LLM-tools-$STAMP)"

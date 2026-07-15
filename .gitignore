@@ -1,6 +1,10 @@
 # Generated state — rebuildable, never committed (AGENTS.md)
 .repoindex/
 
+# Personal tool-usage telemetry from the guard hook — machine-local
+.savings/
+savings_record.md
+
 # Python
 __pycache__/
 *.pyc
