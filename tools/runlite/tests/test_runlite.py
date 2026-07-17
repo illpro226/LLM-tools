@@ -66,6 +66,31 @@ def test_no_command_given(capsys):
     assert "no command" in err
 
 
+def test_resolve_windows_cmd(monkeypatch):
+    # PATHEXT shims (npx.cmd) resolve through shutil.which; unknown names
+    # pass through untouched so the 127 path reports the bare name.
+    shim = r"C:\npm\npx.cmd"
+    monkeypatch.setattr(runlite.shutil, "which",
+                        lambda name: shim if name == "npx" else None)
+    assert runlite._resolve_windows_cmd(["npx", "tsc", "--noEmit"]) == \
+        [shim, "tsc", "--noEmit"]
+    assert runlite._resolve_windows_cmd(["nosuch", "-x"]) == ["nosuch", "-x"]
+
+
+def test_windows_cmd_shim_runs(tmp_path, capsys, monkeypatch):
+    # End-to-end repro of known-issue runlite-npx-not-found-windows: a bare
+    # name that only exists as a .cmd shim on PATH must spawn, not 127.
+    if os.name != "nt":
+        import pytest
+        pytest.skip("windows-only: .cmd shims")
+    (tmp_path / "shimtool.cmd").write_text("@echo off\necho shim-ran\n")
+    monkeypatch.setenv("PATH",
+                       str(tmp_path) + os.pathsep + os.environ.get("PATH", ""))
+    code, out, _ = run(["--", "shimtool"], capsys)
+    assert code == 0
+    assert "exit 0" in out
+
+
 def test_split_argv_without_separator():
     assert runlite._split_argv(["--max-tokens", "50", "echo", "hi"]) == (
         ["--max-tokens", "50"], ["echo", "hi"])

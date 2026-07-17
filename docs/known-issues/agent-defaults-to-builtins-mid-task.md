@@ -70,3 +70,14 @@ edit → verify loop.
   on repeated in-context instruction or agent self-correction has now
   failed three times in a single session and should not be the primary
   mitigation.
+
+---
+
+**Field report 2026-07-17 (bible-atlas session):** hook boundaries behaved
+well overall. Correct denies: raw `git log --oneline -10` (→ gitbrief log),
+`cat tokens.css` (→ Read/xread). Borderline over-fires: `cat` on a 2-line
+playwright console log and the PostToolUse nudge on a 6.7KB whole-file Read
+of a page component that genuinely needed full context before a rewrite —
+each cost one extra round trip, no wrong outcome. Adoption itself held:
+xread/sgrep/gitbrief/codediff/repomap used throughout a full feature build
+without reverting to builtins mid-task.

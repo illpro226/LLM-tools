@@ -18,7 +18,9 @@ score first) and trimming at blank-line boundaries — never mid-statement.
 
 Parsing is stateless per invocation, stdlib only: Python via `ast` (exact
 spans), JS/TS via a brace-tracking line scanner (heuristic: declarations
-must open their brace on the same line), markdown via heading scan.
+must open their brace on the same line), markdown via heading scan, Prisma
+schemas via a flat block scanner (model/enum/type/view/generator/
+datasource).
 """
 
 import argparse
@@ -26,14 +28,17 @@ import os
 import re
 import sys
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 PY_EXTS = {".py", ".pyi"}
 TS_EXTS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"}
 MD_EXTS = {".md", ".markdown"}
+PRISMA_EXTS = {".prisma"}
 
 WINDOW = 20        # query-mode block size for lines outside any symbol
 DEFAULT_TOP = 3    # query-mode blocks returned
+ADJACENT_MAX = 20  # query-mode: max lines of a preceding sibling section
+                   # pulled in when a match starts at a markdown heading
 
 
 class XreadError(Exception):
@@ -238,6 +243,41 @@ def parse_markdown(source, lines):
     return headings
 
 
+# ------------------------------------------------------------ prisma parser
+# Prisma schemas are flat block declarations: `model X { ... }` with no
+# nesting, `//` comments, `"` strings (which may themselves contain `//`,
+# e.g. datasource URLs — strip strings before comments).
+
+_PRISMA_BLOCK = re.compile(
+    r"^\s*(model|enum|type|view|generator|datasource)\s+(\w+)\s*\{")
+_PRISMA_STRING = re.compile(r'"[^"]*"')
+
+
+def parse_prisma(source, lines):
+    symbols = []
+    open_sym = None
+    depth = 0
+    for i, raw in enumerate(lines, 1):
+        code = _PRISMA_STRING.sub('""', raw).split("//", 1)[0]
+        if open_sym is None:
+            m = _PRISMA_BLOCK.match(code)
+            if m:
+                start = _extend_comments(lines, i, ("//",))
+                open_sym = {"name": m.group(2), "qual": m.group(2),
+                            "kind": m.group(1), "start": start,
+                            "end": i, "top": True}
+                symbols.append(open_sym)
+        if open_sym is not None:
+            depth += code.count("{") - code.count("}")
+            if depth <= 0:
+                open_sym["end"] = i
+                open_sym = None
+                depth = 0
+    if open_sym is not None:  # unterminated block: close at EOF
+        open_sym["end"] = len(lines)
+    return symbols
+
+
 # ------------------------------------------------------------------ files
 
 def parser_for(path):
@@ -248,6 +288,8 @@ def parser_for(path):
         return parse_ts
     if ext in MD_EXTS:
         return parse_markdown
+    if ext in PRISMA_EXTS:
+        return parse_prisma
     return None
 
 
@@ -372,7 +414,38 @@ def resolve_query(files, query, top):
                          / max(1, b - a + 1) ** 0.5)
                 scored.append(_region(bidx, bpath, a, b, score))
     scored.sort(key=lambda r: (-r["score"], r["file_index"], r["start"]))
-    return scored[:top]
+    return _pull_in_preceding_sibling(files, scored[:top])
+
+
+def _pull_in_preceding_sibling(files, regions):
+    """A markdown section's payload often sits in a short sibling directly
+    above the section the keywords land in (e.g. a fenced error-envelope
+    under "### Error" scoring below its neighbour "### Error Codes").
+    Fenced code is nearly opaque to keyword scoring, so when a returned
+    region starts at a heading, extend it back over the immediately
+    preceding same-level sibling if that sibling is short and carries a
+    fenced block (known-issue xread-query-misses-adjacent-code-block).
+    Siblings without fences stay out — prose scores on its own merits, and
+    pulling it in unconditionally would pad every markdown match."""
+    for r in regions:
+        _, lines, symbols = files[r["file_index"]]
+        heads = [s for s in symbols or () if "level" in s]
+        match = next((h for h in heads if h["start"] == r["start"]), None)
+        if match is None:
+            continue
+        prev = None  # nearest earlier heading at the same or higher level
+        for h in heads:
+            if h["start"] >= match["start"]:
+                break
+            if h["level"] <= match["level"]:
+                prev = h
+        if (prev is not None and prev["level"] == match["level"]
+                and prev["end"] == match["start"] - 1
+                and prev["end"] - prev["start"] + 1 <= ADJACENT_MAX
+                and any(_MD_FENCE.match(l)
+                        for l in lines[prev["start"] - 1:prev["end"]])):
+            r["start"] = prev["start"]
+    return regions
 
 
 # -------------------------------------------------------- merge and render

@@ -1,5 +1,17 @@
 # xread Changelog
 
+- 2026-07-17: v0.2.0 — Prisma schema support for `--symbol`: flat block
+  scanner for `model|enum|type|view|generator|datasource NAME { ... }`
+  with attached `//` comments; strings are stripped before comments so
+  braces in defaults and `//` in datasource URLs don't derail spans (fixes
+  known-issue `xread-symbol-no-prisma-support`). Query mode: a returned
+  markdown region that starts at a heading now pulls in the immediately
+  preceding same-level sibling section when it is short (≤ 20 lines) and
+  carries a fenced block — fenced payloads are nearly opaque to keyword
+  scoring, so the envelope above the section that matched was being
+  dropped (fixes known-issue `xread-query-misses-adjacent-code-block`);
+  prose siblings still score on their own merits. 35 tests.
+
 - 2026-07-11: v0.1.1 — query mode: blocks are clamped at the next
   top-level symbol so nested markdown sections tile the file instead of
   the H1 span (whole document) competing with — and swallowing — the

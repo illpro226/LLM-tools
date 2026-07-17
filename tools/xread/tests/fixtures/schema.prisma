@@ -1,0 +1,28 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL") // e.g. "postgresql://host/db"
+}
+
+// A book of scripture.
+// Ordered canonically.
+model Book {
+  id     Int     @id @default(autoincrement())
+  name   String  @unique
+  verses Verse[]
+}
+
+model Verse {
+  id     Int    @id @default(autoincrement())
+  text   String @default("{}")
+  book   Book   @relation(fields: [bookId], references: [id])
+  bookId Int
+}
+
+enum Testament {
+  OLD
+  NEW
+}

@@ -123,6 +123,41 @@ def test_symbol_typescript_method_with_attached_comment(capsys):
     assert out.splitlines()[0] == header("sample.ts", start, end)
 
 
+def test_symbol_prisma_model_with_attached_comment(capsys):
+    code, out, _ = run([fx("schema.prisma"), "--symbol", "Book"], capsys)
+    assert code == 0
+    start = lineno("schema.prisma", "// A book of scripture.")
+    end = lineno("schema.prisma", "verses Verse[]") + 1
+    assert out.splitlines()[0] == header("schema.prisma", start, end)
+    assert "model Book {" in out
+    assert "model Verse" not in out
+
+
+def test_symbol_prisma_braces_in_strings_and_comments(capsys):
+    # `@default("{}")` and a `//` inside a datasource URL string must not
+    # derail the block scanner.
+    code, out, _ = run([fx("schema.prisma"), "--symbol", "Verse"], capsys)
+    assert code == 0
+    assert 'text   String @default("{}")' in out
+    assert out.strip().endswith("}")
+    assert "enum Testament" not in out
+
+    code, out, _ = run([fx("schema.prisma"), "--symbol", "db"], capsys)
+    assert code == 0
+    assert 'url      = env("DATABASE_URL")' in out
+
+
+def test_symbol_prisma_enum_and_generator(capsys):
+    code, out, _ = run([fx("schema.prisma"), "--symbol", "Testament"],
+                       capsys)
+    assert code == 0
+    assert "OLD" in out and "NEW" in out
+
+    code, out, _ = run([fx("schema.prisma"), "--symbol", "client"], capsys)
+    assert code == 0
+    assert 'provider = "prisma-client-js"' in out
+
+
 def test_symbol_unsupported_filetype_errors(tmp_path, capsys):
     target = tmp_path / "notes.txt"
     target.write_text("hello\n")
@@ -227,6 +262,31 @@ def test_query_markdown_returns_section_not_whole_file(capsys):
     heads = headers_in(out)
     assert header("doc.md", 1, 27) not in heads   # not the whole file
     assert "Nothing yet." not in out              # ## FAQ (no hits) is not
+
+
+def test_query_markdown_pulls_in_short_fenced_sibling(capsys):
+    # known-issue xread-query-misses-adjacent-code-block: the fenced
+    # payload sits in a short "### Error" section right above the
+    # "### Error Codes" section the keywords land in — the match must
+    # extend back over it.
+    code, out, _ = run([fx("api.md"),
+                        "--query", "error envelope error codes NOT_FOUND",
+                        "--top", "1"], capsys)
+    assert code == 0
+    start = lineno("api.md", "### Error")           # the sibling
+    end = lineno("api.md", "### Success") - 1
+    assert headers_in(out) == [header("api.md", start, end)]
+    assert '"code": "STRING"' in out                # the fenced envelope
+
+
+def test_query_markdown_prose_sibling_stays_out(capsys):
+    # A preceding sibling without a fence is scored on its own merits,
+    # never padded in (rank.md: ## Deployment above ## Suggested build
+    # order) — see test_query_markdown_all_keywords_beat_repeated_one.
+    code, out, _ = run([fx("rank.md"), "--query", "suggested build order",
+                        "--top", "1"], capsys)
+    assert code == 0
+    assert "## Deployment" not in out
 
 
 # ------------------------------------------------------ markdown mode

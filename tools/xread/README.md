@@ -8,7 +8,8 @@ whole-file reads.
 Single-file Python CLI, stdlib only. Python is parsed with `ast` (exact
 spans, decorators and attached comments included); JS/TS with a
 brace-tracking heuristic scanner; markdown headings are treated as just
-another symbol kind.
+another symbol kind; Prisma schema blocks (`model`, `enum`, `type`,
+`view`, `generator`, `datasource`) with a flat block scanner.
 
 ## Usage
 

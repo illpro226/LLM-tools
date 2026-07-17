@@ -62,7 +62,7 @@ lint rule table could grow.
 
 ## runlite — command output distiller
 
-**Status:** Implemented v0.1.0.
+**Status:** Implemented v0.1.1.
 
 Runs a build/test/lint command, captures merged stdout+stderr, and prints a
 failure-focused report (exit code, wall time, extracted problems with
@@ -80,7 +80,8 @@ pattern lines + last 20 lines). Detection order: command name → log
 fingerprint → generic.
 
 **Exit codes:** passthrough of the wrapped command's exit code; reserved 125
-(runlite-internal failure), 127 (command not found).
+(runlite-internal failure), 127 (command not found). On Windows, argv[0]
+resolves through PATHEXT so `.cmd`/`.bat` shims (`npx`, `tsc`) spawn.
 
 **Example:**
 ```
@@ -99,7 +100,7 @@ FAIL test_add  test_demo.py:5
 
 ## xread — targeted code excerpt reader
 
-**Status:** Implemented v0.1.1.
+**Status:** Implemented v0.2.0.
 
 Prints just the relevant part of a file — a named symbol's body, a line
 range expanded to its enclosing scope, top keyword-scoring blocks, or a
@@ -122,7 +123,12 @@ boundaries — never mid-statement).
 **Parsers:** Python via stdlib `ast` (exact spans, decorators + attached
 comments); JS/TS via a brace-tracking heuristic (declarations must open
 their brace on the same line — Allman-style and multi-line arrow params are
-missed); markdown via a fence-aware heading scan.
+missed); markdown via a fence-aware heading scan; Prisma schemas via a flat
+block scanner (`model`/`enum`/`type`/`view`/`generator`/`datasource`).
+
+Query mode on markdown pulls in a short (≤ 20 line) preceding same-level
+sibling section when the match starts at a heading and the sibling carries
+a fenced block — the payload-above-the-match case.
 
 Every excerpt starts with a citable `== path:start-end ==` header;
 `… N lines elided …` markers appear between non-adjacent excerpts; overlapping

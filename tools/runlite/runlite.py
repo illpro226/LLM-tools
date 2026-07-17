@@ -19,11 +19,12 @@ and 127 (command not found).
 import argparse
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 EXIT_INTERNAL = 125   # runlite's own failure, never the wrapped command's
 EXIT_NOT_FOUND = 127
@@ -412,6 +413,18 @@ def render(exit_code, wall, ext_name, problems, tail, max_tokens, log_path):
 
 # ---------------------------------------------------------------------- CLI
 
+def _resolve_windows_cmd(cmd):
+    """Windows CreateProcess ignores PATHEXT, so bare names of .cmd/.bat
+    shims (npx, tsc, npm) raise FileNotFoundError even though a shell finds
+    them. Resolve argv[0] the way a shell would; leave it unchanged when
+    nothing matches so the not-found path still reports the bare name
+    (known-issue runlite-npx-not-found-windows)."""
+    resolved = shutil.which(cmd[0])
+    if resolved:
+        return [resolved] + cmd[1:]
+    return cmd
+
+
 def _split_argv(argv):
     """Split runlite's own options from the wrapped command."""
     if "--" in argv:
@@ -450,9 +463,12 @@ def main(argv=None):
               file=sys.stderr)
         return EXIT_INTERNAL
 
+    # Detection and messages keep the command as typed; only the spawn
+    # uses the resolved path.
+    spawn = _resolve_windows_cmd(cmd) if os.name == "nt" else cmd
     try:
         start = time.monotonic()
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE,
+        proc = subprocess.run(spawn, stdout=subprocess.PIPE,
                               stderr=subprocess.STDOUT)
         wall = time.monotonic() - start
     except FileNotFoundError:
