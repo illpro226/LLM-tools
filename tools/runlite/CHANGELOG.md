@@ -1,5 +1,12 @@
 # runlite Changelog
 
+- 2026-07-19: v0.1.2 — a failing run whose extractor parses nothing (e.g.
+  `pytest` selected by command name but the framework itself missing) now
+  falls back to the generic extractor so the log tail always appears, and
+  the header says "no findings (see log tail)" instead of "no problems"
+  on nonzero exits (fixes known-issue
+  `runlite-pytest-extractor-swallows-missing-module`). 29 tests.
+
 - 2026-07-17: v0.1.1 — Windows: resolve the wrapped command's argv[0]
   through `shutil.which` (PATHEXT-aware) before spawning, so `.cmd`/`.bat`
   shims like `npx`/`tsc` launch instead of exiting 127; detection and the

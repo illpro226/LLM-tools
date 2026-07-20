@@ -229,6 +229,24 @@ def test_generic_keeps_errorish_and_tail():
 
 # ----------------------------------------------------------------- rendering
 
+def test_failing_exit_never_reads_as_pass():
+    lines = runlite.render(1, 0.02, "pytest", [], [], 0, "")
+    assert lines == ["# runlite: exit 1 in 0.02s (pytest) no findings"]
+    lines = runlite.render(1, 0.02, "pytest", [], ["some tail"], 0, "")
+    assert lines[0].endswith("no findings (see log tail)")
+
+
+def test_empty_extract_on_failure_falls_back_to_tail(capsys):
+    # A pytest-named command that fails without pytest-format output (the
+    # framework itself missing): the report must still carry the log tail.
+    prog = ("import sys; sys.stderr.write('no module named pytest\\n'); "
+            "sys.exit(1)")
+    code, out, _ = run(["--", sys.executable, "-c", prog, "pytest"], capsys)
+    assert code == 1
+    assert "(pytest) no findings (see log tail)" in out
+    assert "no module named pytest" in out
+
+
 def test_max_tokens_first_full_rest_one_line():
     problems, _ = parse("pytest", "pytest_fail.log")
     lines = runlite.render(1, 0.53, "pytest", problems, [], 60, "")

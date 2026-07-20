@@ -24,7 +24,7 @@ import subprocess
 import sys
 import time
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 EXIT_INTERNAL = 125   # runlite's own failure, never the wrapped command's
 EXIT_NOT_FOUND = 127
@@ -374,7 +374,12 @@ def _block(p):
 
 def render(exit_code, wall, ext_name, problems, tail, max_tokens, log_path):
     n = len(problems)
-    count = "no problems" if n == 0 else "%d problem%s" % (n, "s"[: n != 1])
+    if n:
+        count = "%d problem%s" % (n, "s"[: n != 1])
+    elif exit_code == 0:
+        count = "no problems"
+    else:  # a failing run with nothing parsed must not read as a pass
+        count = "no findings (see log tail)" if tail else "no findings"
     header = ["# runlite: exit %d in %.2fs (%s) %s"
               % (exit_code, wall, ext_name, count)]
     if log_path:
@@ -490,6 +495,10 @@ def main(argv=None):
 
     ext = detect(cmd, log)
     problems, tail = ext.parse(log)
+    if proc.returncode != 0 and not problems and not tail:
+        # The named extractor parsed nothing from a failing run (e.g. the
+        # test framework itself is missing); never report less than the log.
+        problems, tail = parse_generic(log)
     lines = render(proc.returncode, wall, ext.name, problems, tail,
                    args.max_tokens, args.full_log)
     try:  # tool logs may carry symbols the console encoding lacks (✕, ●, ⎯)
