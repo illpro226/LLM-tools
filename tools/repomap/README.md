@@ -7,7 +7,8 @@ itself in a repo for ~1–2k tokens instead of reading dozens of files.
 
 ```
 ./repomap.py [DIR]              map for a directory (default: cwd)
-./repomap.py --focus PATH       expand one subtree, compress the rest
+./repomap.py --focus PATH       outline only that file/subtree; every
+                                other file collapses to one line
 ./repomap.py --max-tokens N     stay under a token budget (bytes/4),
                                 degrading: collapse deep tree levels →
                                 drop low-rank outlines → drop signatures

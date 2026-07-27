@@ -1,13 +1,15 @@
 # repomap Status
 
-Implemented (v0.1.0) and passing tests.
+Implemented (v0.2.0) and passing tests.
 
 - `repomap.py` — single-file, stdlib-only CLI covering the PRD surface:
   pruned tree (built-in skip list + root `.gitignore` subset), per-file
   top-level symbol outlines with signatures and docstring/comment first
   lines, reference-count ranking (most-referenced files first), `--focus
-  PATH` (full detail in the subtree, names-only outlines and a shallower
-  tree elsewhere), `--max-tokens N` (bytes/4) degrading in order: collapse
+  PATH` (outlines only that file or subtree; every other file collapses to
+  `path [refs N] (K symbols)`, and the tree elsewhere goes shallower),
+  runs of 3+ `test_*` functions collapsed to one counted line,
+  `--max-tokens N` (bytes/4) degrading in order: collapse
   deep tree levels, drop low-rank file outlines, drop signatures,
   tree-only. Never truncates mid-entry.
 - Extraction (stdlib only — ADR-004 deviation from the planned

@@ -64,3 +64,25 @@ replaces the counter body and the counter remains the no-index fallback.
 Consequences: one ranking path today, two to test later; repomap places no
 requirements on repoindex's schema; TESTING.md's index-preference area is
 deferred with this ADR as the pointer.
+
+## ADR-006: `--focus` narrows the output, it does not merely rank — Accepted (2026-07-27)
+
+Context: dogfooding `repomap . --focus toch/cli.py` to plan an edit to one
+465-line file returned ~180 lines — the focused file's outline first, then
+every other ranked file's full symbol table, including ~90 individual test
+functions (docs/known-issues/repomap-focus-does-not-narrow-output.md).
+Reading the `def` lines out of the target file directly would have cost less,
+inverting the suite's whole value proposition on precisely the "orient me on
+one file" question repomap is the recommended answer for.
+Decision: `--focus PATH` collapses every file outside the focus to its header
+line plus a symbol count (`path [refs N] (12 symbols)`), with a note naming
+the focus and how to get the outlines back. The flag name is kept: narrowing
+is what "focus" reads as, and the previous behavior — rank-only — was the
+mismatch. Independently, a run of three or more consecutive `test_*` functions
+in any file collapses to one counted line, since a suite's test names are the
+bulkiest and least informative thing an outline can carry.
+Consequences: `--focus` no longer surfaces a neighbour's symbol by accident;
+callers/callees of the focused file are named (with ref counts) but not
+expanded, which the known issue accepted as sufficient. Dropping `--focus`
+restores the full map, so nothing is unreachable. No `--only` or `--rank-by`
+flag was added — one flag with the expected meaning beats two.

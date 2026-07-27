@@ -1,8 +1,12 @@
 import os
 import re
+import subprocess
+import sys
 
 import repomap
 
+REPOMAP = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "repomap.py")
 REPO = os.path.join(os.path.dirname(__file__), "fixtures", "repo")
 PREFIX = REPO.replace("\\", "/") + "/"
 
@@ -38,7 +42,7 @@ def sym_line(rel, needle, rest):
 def ref_headers(out):
     """File-outline header paths in output order."""
     return [l.split("  [refs")[0] for l in out.splitlines()
-            if re.match(r"^\S.*  \[refs \d+\]$", l)]
+            if re.match(r"^\S.*  \[refs \d+\](  \(\d+ symbols?\))?$", l)]
 
 
 def est(out):
@@ -151,15 +155,42 @@ def test_ranking_labeled_heuristic(capsys):
 
 # ------------------------------------------------------------------- focus
 
-def test_focus_expands_subtree_and_compresses_rest(capsys):
+def test_focus_narrows_to_subtree(capsys):
     out = full(capsys, "--focus", "web")
     headers = ref_headers(out)
     assert headers[0] == PREFIX + "web/index.ts"
     # focus file keeps full detail
     assert "export function mount(el: Element): void" in out
-    # non-focus files fall back to names-only
+    # every other file collapses to its header line — no symbols at all
     assert "def parse(text)" not in out
-    assert sym_line("src/util.py", "def parse", "func parse") in out
+    assert sym_line("src/util.py", "def parse", "func parse") not in out
+    assert PREFIX + "src/util.py" + "  [refs " in out
+    assert "symbols)" in out
+    assert "collapsed to one line" in out
+
+
+def test_test_function_runs_collapse_to_a_count(capsys, tmp_path):
+    """A well-tested file should not cost more to map than a bare one."""
+    (tmp_path / "test_suite.py").write_text(
+        "def helper():\n    pass\n\n"
+        + "".join("def test_case_%d():\n    pass\n\n" % i for i in range(12)),
+        encoding="utf-8")
+    code, out, err = run([str(tmp_path)], capsys)
+    assert code == 0, err
+    assert "12 test functions (test_case_0 …)" in out
+    for i in range(1, 12):
+        assert "test_case_%d" % i not in out
+    assert "def helper()" in out          # non-test symbols still listed
+
+
+def test_short_test_runs_are_left_alone(capsys, tmp_path):
+    (tmp_path / "test_pair.py").write_text(
+        "def test_a():\n    pass\n\ndef test_b():\n    pass\n",
+        encoding="utf-8")
+    code, out, err = run([str(tmp_path)], capsys)
+    assert code == 0, err
+    assert "test_a" in out and "test_b" in out
+    assert "test functions" not in out
 
 
 def test_focus_missing_path_errors(capsys):
@@ -227,3 +258,22 @@ def test_missing_dir_errors(capsys):
     code, out, err = run([os.path.join(REPO, "no_such_dir")], capsys)
     assert code == 2
     assert "not a directory" in err
+
+
+# --------------------------------------------------------------- encoding
+
+def test_non_ascii_content_survives_a_cp1252_console(tmp_path):
+    """Docstrings echoed into an outline must round-trip byte-for-byte; a
+    mangled line copied back into an Edit is a silent corruption. In-process
+    capsys can't see this — pytest's capture replaces sys.stdout with a
+    stream reconfigure() does not apply to — so run the CLI for real."""
+    (tmp_path / "probe.py").write_text(
+        'def f():\n    """Map file\u2192keys \u2014 one way."""\n    return 1\n',
+        encoding="utf-8")
+    env = dict(os.environ, PYTHONIOENCODING="cp1252")
+    proc = subprocess.run([sys.executable, REPOMAP, str(tmp_path)],
+                          capture_output=True, env=env)
+    assert proc.returncode == 0, proc.stderr
+    assert "\u2014".encode("utf-8") in proc.stdout
+    assert "\u2192".encode("utf-8") in proc.stdout
+    assert b"?" not in proc.stdout

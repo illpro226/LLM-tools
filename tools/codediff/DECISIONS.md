@@ -59,3 +59,26 @@ wherever it wants. The core tool stays keyless and networkless
 Consequences: PRD's `--llm` criterion is satisfied vacuously (no network,
 ever); if an in-tool narrative is wanted later it wraps the existing JSON,
 adding no new analysis path.
+
+## ADR-006: Test files get their own counted section — Accepted
+
+Context: dogfooding on a change that added one CLI subcommand plus 29 tests
+put every new test function under **API changes**, one line each, with the
+single genuinely new piece of public surface as the last line of the section
+(docs/known-issues/codediff-enumerates-every-new-test.md). The section was
+accurate by a literal reading — those are newly added top-level functions —
+but the noise scaled with test count, so the better-tested the change, the
+worse the summary. Signal ordering is the whole product.
+Decision: "API" means a surface a caller could depend on, and nothing depends
+on a test name. Files matching the existing `_is_test_path` conventions
+(`tests/**`, `test_*`, `*_test.py|go`, `*.test.*`, `*.spec.*`) bypass
+symbol-level classification entirely and emit one line in a new **Tests**
+section: added/removed/changed counts split into test functions and helpers
+(`+29 tests, +1 helper`). Mechanical detection still runs first, so a
+reformatted test file stays Mechanical.
+Consequences: test symbols cannot reach the API/Behavior lists, so they no
+longer inflate the public-API or behavior-delta risk flags — a well-tested
+change stops reading as a riskier one. The cost is that a semantically
+interesting edit to a test helper is reported only as a count; the file and
+its `path:line` are still listed, so `xread`/`gitbrief` can follow up. No new
+flag to exclude tests is needed, and none was added.

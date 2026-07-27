@@ -9,8 +9,10 @@
 Sections: API changes (added/renamed public symbols, signature changes as
 old → new), Behavior changes (modified bodies with cheap high-signal
 patterns: changed literals/defaults `3 → 5`, added/removed conditionals and
-calls), Removed (deleted symbols, noting deprecation markers), Mechanical
-(formatting/comment-only, import reshuffles — one line per file). Risk is a
+calls), Removed (deleted symbols, noting deprecation markers), Tests (one
+counted line per test file — nothing depends on a test name, so enumerating
+them would bury the real surface change), Mechanical (formatting/comment-only,
+import reshuffles — one line per file). Risk is a
 flat list of deterministic, individually explainable flags — never an
 ordinal grade (see DECISIONS.md ADR-002 and docs/decisions/0002).
 
@@ -36,7 +38,7 @@ try:
 except ImportError:  # pragma: no cover - Python < 3.11
     tomllib = None
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 DEFAULT_KEYWORDS = ("auth", "crypto", "payment", "migration",
                     "secret", "password", "credential")
@@ -44,9 +46,10 @@ DEFAULT_LARGE_DELTA = 5
 DB_RELPATH = os.path.join(".repoindex", "index.db")
 CONFIG_NAME = ".codediff.toml"
 
-SECTION_ORDER = ("api", "behavior", "removed", "mechanical")
+SECTION_ORDER = ("api", "behavior", "removed", "tests", "mechanical")
 SECTION_TITLES = {"api": "API changes", "behavior": "Behavior changes",
-                  "removed": "Removed", "mechanical": "Mechanical"}
+                  "removed": "Removed", "tests": "Tests",
+                  "mechanical": "Mechanical"}
 
 _LIT_RE = re.compile(r"\d+\.\d+|\d+|'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"")
 _TOKEN_RE = re.compile(
@@ -361,9 +364,41 @@ def _mechanical_kind(before_src, after_src, ef_b, ef_a, lang):
     return None
 
 
+def _is_test_symbol(name, sym):
+    leaf = name.split(".")[-1]
+    return sym.kind == "func" and leaf.lower().startswith("test")
+
+
+def _test_summary(before, after, b_lines, a_lines):
+    """One line's worth of counts for a test file. Nothing depends on a test
+    name, so enumerating them would bury the change's real surface under
+    noise that grows with how well the change is tested."""
+    added = sorted(set(after) - set(before))
+    removed = sorted(set(before) - set(after))
+    changed = [n for n in sorted(set(before) & set(after))
+               if _norm(_body_lines(b_lines, before[n]))
+               != _norm(_body_lines(a_lines, after[n]))]
+
+    def split(names, table):
+        tests = [n for n in names if _is_test_symbol(n, table[n])]
+        return len(tests), len(names) - len(tests)
+
+    parts = []
+    for label, names, table in (("+", added, after), ("-", removed, before),
+                                ("~", changed, after)):
+        n_test, n_helper = split(names, table)
+        if n_test:
+            parts.append("%s%d test%s" % (label, n_test,
+                                          "" if n_test == 1 else "s"))
+        if n_helper:
+            parts.append("%s%d helper%s" % (label, n_helper,
+                                            "" if n_helper == 1 else "s"))
+    return ", ".join(parts)
+
+
 def analyze_file(entry, before_src, after_src, extract, lang, out):
-    """Classify one changed file into the four sections (dict lists in
-    `out`). Every entry: {text, path, line, public}."""
+    """Classify one changed file into the sections (dict lists in `out`).
+    Every entry: {text, path, line, public}."""
     path = entry["path"]
 
     def add(section, text, line, public=False):
@@ -390,6 +425,11 @@ def analyze_file(entry, before_src, after_src, extract, lang, out):
     a_lines = after_src.splitlines()
     before = {_local(s.qualname): s for s in ef_b.symbols}
     after = {_local(s.qualname): s for s in ef_a.symbols}
+
+    if _is_test_path(path):
+        summary = _test_summary(before, after, b_lines, a_lines)
+        add("tests", summary or "changed outside any test symbol", 1)
+        return
 
     added = sorted(set(after) - set(before))
     removed = sorted(set(before) - set(after))
@@ -762,8 +802,8 @@ def main(argv=None):
         print("codediff: %s" % exc, file=sys.stderr)
         return 2
 
-    try:
-        sys.stdout.reconfigure(errors="replace")
+    try:  # echo file content byte-faithfully, not via a cp1252 console default
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
         pass
     print(text)

@@ -119,6 +119,53 @@ def test_removed_deprecated(repo):
     assert "- validate_token() (func, public, was deprecated)" in out
 
 
+# -------------------------------------------------------------- tests ---
+
+def _add_suite(repo, n=29):
+    body = "".join("def test_case_%d():\n    assert %d\n\n\n" % (i, i)
+                   for i in range(n))
+    write(repo, "tests/test_graph.py",
+          "def _manifest():\n    return {}\n\n\n" + body)
+
+
+def test_new_tests_collapse_to_counts_not_api(repo):
+    """The whole point of the summary is signal ordering: 29 test names must
+    not bury the one genuinely new piece of public surface."""
+    _add_suite(repo)
+    doc = run_json(repo)
+    assert not [e for e in doc["api"] if "test_case" in e["text"]]
+    assert not [e for e in doc["behavior"] if "test_case" in e["text"]]
+    entry = next(e for e in doc["tests"] if e["path"] == "tests/test_graph.py")
+    assert entry["text"] == "+29 tests, +1 helper"
+
+
+def test_tests_section_rendered_with_its_own_heading(repo):
+    _add_suite(repo)
+    out = run(repo).stdout
+    assert "Tests" in out
+    assert "+29 tests, +1 helper" in out
+    assert "test_case_0" not in out
+
+
+def test_test_symbols_do_not_drive_the_behavior_delta_flag(repo):
+    """A better-tested change must not read as a riskier one."""
+    before = [f for f in run_json(repo)["risk_flags"]
+              if "large behavior delta" in f["text"]]
+    _add_suite(repo)
+    after = [f for f in run_json(repo)["risk_flags"]
+             if "large behavior delta" in f["text"]]
+    assert before == after
+
+
+def test_changed_test_body_reported_as_a_count(repo):
+    write(repo, "tests/test_core.py",
+          "from src.auth.core import login\n\n\n"
+          "def test_login():\n    assert login('u', mfa='x')\n")
+    doc = run_json(repo)
+    entry = next(e for e in doc["tests"] if e["path"] == "tests/test_core.py")
+    assert entry["text"] == "~1 test"
+
+
 def test_mechanical_formatting_one_line(repo):
     out = run(repo).stdout
     fmt_lines = [l for l in out.splitlines() if "src/fmt.py" in l]

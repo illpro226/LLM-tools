@@ -13,7 +13,7 @@ detect which files changed and to catch formatting-only cases cheaply.
 git (working tree vs HEAD | ref | range | --staged) ──► changed files + blobs
 repoindex.extract(before), repoindex.extract(after) ──► symbol tables
 align + diff symbols ──► deltas
-classify ──► {API, Behavior, Removed, Mechanical}
+classify ──► {API, Behavior, Removed, Tests, Mechanical}
 risk(deltas, config, tests table) ──► LOW/MED/HIGH + reasons
 render | --json | --llm(narrative over compact delta)
 ```
@@ -35,6 +35,9 @@ render | --json | --llm(narrative over compact delta)
     value changes (`3 → 5`), added/removed conditionals, added/removed calls.
   - *Removed*: deleted symbols, noting deprecation markers found on the before
     side.
+  - *Tests*: files matching test conventions get one counted line
+    (`+29 tests, +1 helper`) instead of per-symbol entries, and never
+    contribute to the API/Behavior sections or the risk flags — see ADR-006.
   - *Mechanical*: formatting-only / comment-only / import reshuffles, detected
     by comparing normalized token streams; collapsed to one line.
 - **Risk scorer** — explainable additive heuristics: sensitive-path keywords

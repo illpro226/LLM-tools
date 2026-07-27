@@ -36,9 +36,11 @@ build_output(ctx) ──► re-render at lower detail until within budget
   slot in once repoindex pins its schema (ADR-005).
 - **Renderer** (`_render`) — header, pruned tree, then per-file outline
   blocks in rank order. Detail per file is `full` (signature + doc line) or
-  `names` (kind + name). `--focus PATH` puts the subtree's files first at
-  full detail, drops the rest to names, and collapses unrelated tree
-  branches below depth 2.
+  `names` (kind + name), or `summary` (the header line alone, with a symbol
+  count). `--focus PATH` puts the subtree's files first at full detail, drops
+  every other file to `summary`, and collapses unrelated tree branches below
+  depth 2 — it narrows, it does not merely rank (ADR-006). Runs of three or
+  more `test_*` functions collapse to one counted line in any mode.
 - **Budget reducer** (`build_output`) — estimates tokens as bytes/4 and
   degrades in whole levels, never mid-entry: first collapses deep tree
   levels until the tree costs at most half the budget, then binary-searches

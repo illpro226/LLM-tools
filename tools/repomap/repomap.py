@@ -5,8 +5,9 @@ Prints an orientation view of a codebase in one screen:
 
     repomap [DIR]            pruned directory tree + per-file symbol
                              outlines, most-referenced files first
-    repomap --focus PATH     full detail for one subtree, names-only
-                             outlines and a shallower tree elsewhere
+    repomap --focus PATH     outline one file or subtree; every other
+                             file collapses to `path [refs N] (K symbols)`
+                             and the tree elsewhere goes shallower
     repomap --max-tokens N   stay under a token budget (bytes/4),
                              degrading in order: drop low-rank file
                              outlines -> drop signatures -> tree only
@@ -28,7 +29,7 @@ import os
 import re
 import sys
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 PY_EXTS = {".py", ".pyi"}
 TS_EXTS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"}
@@ -538,11 +539,43 @@ def _in_focus(f, focus):
     return f["rel"] == focus or f["rel"].startswith(focus + "/")
 
 
+TEST_RUN_MIN = 3
+
+
+def _is_test_symbol(s):
+    return s["kind"] == "func" and s["name"].startswith("test_")
+
+
+def _collapse_tests(symbols):
+    """Fold runs of test_* functions into one entry each. A suite's test names
+    are the bulkiest thing in an outline and the least informative — a better
+    tested file should not cost more to map."""
+    out, i = [], 0
+    while i < len(symbols):
+        j = i
+        while j < len(symbols) and _is_test_symbol(symbols[j]):
+            j += 1
+        if j - i >= TEST_RUN_MIN:
+            out.append((symbols[i], j - i))
+            i = j
+        else:
+            out.append((symbols[i], 0))
+            i += 1
+    return out
+
+
 def _file_block(f, prefix, detail):
     dpath = prefix + f["rel"]
     lines = ["%s  [refs %d]" % (dpath, f["score"])]
-    for s in f["symbols"]:
-        if detail == "full":
+    if detail == "summary":
+        n = len(f["symbols"])
+        lines[0] += "  (%d symbol%s)" % (n, "" if n == 1 else "s")
+        return lines
+    for s, run in _collapse_tests(f["symbols"]):
+        if run:
+            line = "  %s:%d %d test functions (%s …)" % (
+                dpath, s["line"], run, s["name"])
+        elif detail == "full":
             line = "  %s:%d %s" % (dpath, s["line"], s["sig"])
             if s["doc"]:
                 line += " — " + s["doc"]
@@ -560,14 +593,22 @@ def _render(ctx, stage, k, depth_limit):
     lines.append(root_label + "/")
     lines += _tree_lines(ctx["tree"], ctx["focus"], depth_limit)
     order = ctx["order"]
+    collapsed = 0
     if stage != "tree":
         for f in order[:k]:
-            detail = ("full" if stage == "full"
-                      and (not ctx["focus"] or _in_focus(f, ctx["focus"]))
-                      else "names")
+            if ctx["focus"] and not _in_focus(f, ctx["focus"]):
+                detail = "summary"   # --focus narrows, not merely ranks
+                collapsed += 1
+            else:
+                detail = "full" if stage == "full" else "names"
             lines.append("")
             lines += _file_block(f, ctx["prefix"], detail)
     notes = []
+    if collapsed:
+        notes.append("(%d file%s outside --focus %s collapsed to one line; "
+                     "drop --focus for their outlines)"
+                     % (collapsed, "" if collapsed == 1 else "s",
+                        ctx["focus"]))
     if stage == "full" and k < len(order):
         notes.append("(… %d lower-ranked file outlines dropped for "
                      "--max-tokens %d)" % (len(order) - k, ctx["budget"]))
@@ -635,8 +676,8 @@ def main(argv=None):
                     "per-file symbol outlines, most-referenced files first")
     parser.add_argument("dir", nargs="?", default=".", metavar="DIR")
     parser.add_argument("--focus", metavar="PATH",
-                        help="expand detail for one subtree, compress "
-                             "the rest")
+                        help="outline only this file or subtree; every other "
+                             "file collapses to a one-line count")
     parser.add_argument("--max-tokens", type=int, metavar="N", default=0,
                         help="cap output at roughly N tokens (bytes/4)")
     parser.add_argument("--version", action="version",
@@ -668,8 +709,8 @@ def main(argv=None):
         print("repomap: %s" % exc, file=sys.stderr)
         return 2
 
-    try:  # source may carry symbols the console encoding lacks
-        sys.stdout.reconfigure(errors="replace")
+    try:  # echo file content byte-faithfully, not via a cp1252 console default
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
         pass
     print("\n".join(lines))

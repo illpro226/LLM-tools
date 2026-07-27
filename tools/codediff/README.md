@@ -5,7 +5,8 @@ Changed files are parsed on both sides with `repoindex`'s pure extraction
 library and diffed at the symbol level, classified into **API changes**
 (signatures as `old → new`, renames detected), **Behavior changes**
 (changed literals/defaults `3 → 5`, conditional and call deltas),
-**Removed** (noting deprecation markers), and **Mechanical**
+**Removed** (noting deprecation markers), **Tests** (one counted line per
+changed test file), and **Mechanical**
 (formatting/comment-only, import reshuffles — one line per file), plus a
 flat list of explainable **risk flags** (never a graded score — see
 DECISIONS.md ADR-003 and `docs/decisions/0002`).
