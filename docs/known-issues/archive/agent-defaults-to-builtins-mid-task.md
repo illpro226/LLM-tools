@@ -1,5 +1,27 @@
 # adoption: agent reverts to Read/Grep/Bash mid-task despite the suite being available and known
 
+**RESOLVED 2026-07-26.** The MITIGATED note below asked for "a few real
+sessions [to] confirm the deny/allow boundaries don't over-fire"; that
+evidence is now in. The 2026-07-17 bible-atlas field report (appended
+below) records a full feature build with no mid-task reversion and only
+two borderline over-fires, each costing one round trip and no wrong
+outcome. The 2026-07-26 savings-record session added a third data point
+from the other direction: the hook's denials were all correct by the rule,
+and the one genuinely awkward case turned out to be a *different* issue
+(remote payloads over ssh — see
+[`guard-hook-denies-ssh-remote-payloads.md`](../guard-hook-denies-ssh-remote-payloads.md),
+still open). No further instance of the original failure — reaching for
+`Read`/`Grep`/`Bash` on a job the suite covers — has been observed since
+the hook shipped.
+
+The mechanism conclusion stands and is the durable takeaway: in-context
+instruction and self-authored memory did not change tool choice, and
+mechanical enforcement at the decision point did, immediately. Anything
+later added to the suite should assume the same — a tool nothing enforces
+is a tool that loses to the trained-in default under task pressure.
+
+Original report and mitigation note follow.
+
 **MITIGATED 2026-07-11 (guard hook v2 + DR 0004).** The recommended fix
 below shipped: `~/.claude/hooks/llm-tools-guard.py` now denies-and-redirects
 shell `grep`/`rg`/`git grep` (→ sgrep), bare `cat`/`Get-Content`/

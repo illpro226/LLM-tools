@@ -8,7 +8,7 @@ Adoption evidence shows the suite loses to built-in `Read`/`Grep` at the
 moment of the tool call even when it is on PATH, known, and explicitly
 preferred in instructions. The record:
 
-- `docs/known-issues/agent-defaults-to-builtins-mid-task.md` — three
+- `docs/known-issues/archive/agent-defaults-to-builtins-mid-task.md` — three
   lapses in one session (CortexLink, 2026-07-11), two immediately after
   the agent acknowledged the previous one; plus a corroborating instance
   in this repo while the agent was analyzing that very issue file.

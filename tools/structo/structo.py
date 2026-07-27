@@ -6,6 +6,9 @@
                               (a leading [N] picks JSONL record N)
     structo FILE --raw --path ...  print the exact value at --path
                               (strings verbatim, else JSON)
+    structo FILE --select a,b.c    project fields out of every record as
+                              TSV, one row per record, for piping to
+                              awk/sort (never into context)
     structo FILE --sample N   elements aggregated per array (default 10)
     structo FILE --max-tokens N    cap output (bytes/4), degrading:
                               drop samples/examples -> collapse deep
@@ -25,12 +28,13 @@ first-N, deterministic).
 
 import argparse
 import csv
+import itertools
 import json
 import os
 import re
 import sys
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 DEFAULT_SAMPLE = 10
 EXAMPLES_PER_NODE = 2
@@ -866,6 +870,117 @@ def _nth_record(path, index):
     return _MISSING, seen
 
 
+# ---------------------------------------------------- --select projection
+
+def parse_select(spec):
+    """`a,b.c,d[0]` -> [(label, segs), ...], order and labels preserved."""
+    fields = []
+    for raw in spec.split(","):
+        name = raw.strip()
+        if not name:
+            raise StructoError("empty field in --select %r" % spec)
+        fields.append((name, parse_path(name)))
+    return fields
+
+
+_TSV_CLEAN = re.compile(r"[\t\r\n]")
+
+
+def _cell(value):
+    """One TSV cell: missing is empty, containers compact JSON, tabs and
+    newlines inside strings become spaces so a row stays one row."""
+    if value is _MISSING:
+        return ""
+    if isinstance(value, str):
+        return _TSV_CLEAN.sub(" ", value)
+    text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return _TSV_CLEAN.sub(" ", text)
+
+
+def _seek(events, first, segs):
+    """Advance the stream to the value at segs; return its first event."""
+    if not segs:
+        return first
+    kind, want = segs[0]
+    if first[0] == "{" and kind == "k":
+        for ev in events:
+            if ev[0] == "}":
+                return _MISSING
+            child = next(events, ("scalar", "null", "null"))
+            if ev[1] == want:
+                return _seek(events, child, segs[1:])
+            _skip_value(events, child)
+    elif first[0] == "[" and kind == "i":
+        idx = 0
+        for ev in events:
+            if ev[0] == "]":
+                return _MISSING
+            if idx == want:
+                return _seek(events, ev, segs[1:])
+            _skip_value(events, ev)
+            idx += 1
+    return _MISSING
+
+
+def iter_records(path, fmt, segs):
+    """Yield records one at a time — memory stays O(one record)."""
+    if fmt == "jsonl":
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                yield record
+    elif fmt in ("json", "yaml"):
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            events = iter(json_events(fh, full=True) if fmt == "json"
+                          else yaml_events(fh))
+            first = next(events, _MISSING)
+            if first is not _MISSING and segs:
+                first = _seek(events, first, segs)
+            if first is _MISSING:
+                raise StructoError("--path not found in %s" % path)
+            if first[0] != "[":
+                raise StructoError(
+                    "--select reads an array of records (%s is not an "
+                    "array)" % ("--path" if segs else "the top level"))
+            for ev in events:
+                if ev[0] == "]":
+                    return
+                yield _materialize(events, ev)
+    elif fmt in ("csv", "tsv"):
+        with open(path, encoding="utf-8", errors="replace",
+                  newline="") as fh:
+            reader = csv.reader(fh, delimiter="\t" if fmt == "tsv" else ",")
+            header = next(reader, None)
+            if not header:
+                raise StructoError("empty file")
+            for row in reader:
+                if not row:
+                    continue
+                yield {h: (row[i] if i < len(row) else "")
+                       for i, h in enumerate(header)}
+    else:
+        raise StructoError("--select needs record-shaped data (json array, "
+                           "jsonl, yaml sequence, csv, tsv; %s detected)"
+                           % fmt)
+
+
+def select_rows(path, fmt, segs, fields):
+    """Header line then one TSV row per record."""
+    records = iter_records(path, fmt, segs)
+    first = next(records, _MISSING)     # surface source errors before output
+    yield "\t".join(name for name, _ in fields)
+    if first is _MISSING:
+        return
+    for record in itertools.chain([first], records):
+        yield "\t".join(_cell(_walk(record, field)) for _, field in fields)
+
+
 def extract_raw(path, fmt, target):
     """Exact value at --path; fully parses only what it returns."""
     if fmt == "jsonl":
@@ -952,6 +1067,18 @@ def summarize(path, fmt, sample, target):
     return "", [lambda lv=lv: render_log(model, lv) for lv in (0, 1, 2)]
 
 
+def _relax_stdout(newline=None):
+    """Never die on an unencodable byte; --select also pins \\n endings so
+    the TSV pipes the same way on every platform."""
+    try:
+        if newline is None:
+            sys.stdout.reconfigure(errors="replace")
+        else:
+            sys.stdout.reconfigure(errors="replace", newline=newline)
+    except (AttributeError, ValueError):
+        pass
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="structo",
@@ -964,6 +1091,10 @@ def main(argv=None):
     parser.add_argument("--raw", action="store_true",
                         help="print the exact value at --path instead of "
                              "a schema (strings verbatim, else JSON)")
+    parser.add_argument("--select", metavar="F1,F2",
+                        help="project fields out of every record as TSV, "
+                             "one row per record (json array/jsonl/yaml "
+                             "sequence/csv/tsv), for piping to awk/sort")
     parser.add_argument("--sample", type=int, metavar="N",
                         default=DEFAULT_SAMPLE,
                         help="array elements aggregated per array "
@@ -985,6 +1116,32 @@ def main(argv=None):
                                    "(%s detected as %s)" % (args.file, fmt))
             target = parse_path(args.path)
         budget = max(0, args.max_tokens)
+        if args.select:
+            if args.raw:
+                raise StructoError("--select and --raw print different "
+                                   "things; pick one")
+            if fmt == "jsonl" and target is not None:
+                raise StructoError(
+                    "--select reads every jsonl line as a record; address "
+                    'into each one with the field names (--select "a.b")')
+            fields = parse_select(args.select)
+            if budget:
+                # Two passes rather than buffering: a projection that
+                # silently dropped records would corrupt whatever the
+                # caller sums downstream, so measure first, then refuse.
+                size, rows = 0, -1
+                for line in select_rows(args.file, fmt, target, fields):
+                    size += len(line.encode("utf-8", "replace")) + 1
+                    rows += 1
+                if size // 4 > budget:
+                    raise StructoError(
+                        "%d rows are ~%d tokens (budget %d); --select never "
+                        "drops records — pipe it to awk/sort rather than "
+                        "reading it" % (rows, size // 4, budget))
+            _relax_stdout(newline="\n")
+            for line in select_rows(args.file, fmt, target, fields):
+                print(line)
+            return 0
         if args.raw:
             if target is None:
                 raise StructoError("--raw needs --path")
@@ -1010,10 +1167,7 @@ def main(argv=None):
         print("structo: %s" % exc, file=sys.stderr)
         return 2
 
-    try:
-        sys.stdout.reconfigure(errors="replace")
-    except (AttributeError, ValueError):
-        pass
+    _relax_stdout()
     print("\n".join(lines))
     return 0
 

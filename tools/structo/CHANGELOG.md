@@ -1,5 +1,14 @@
 # structo Changelog
 
+- 2026-07-26: v0.3.0 — `--select f1,f2` projects records as TSV, one row
+  per record (ADR-005, from
+  docs/known-issues/archive/structo-cannot-aggregate-across-jsonl-records.md).
+  Records are jsonl lines, a JSON array / YAML sequence (top level or at
+  `--path`), or CSV/TSV rows; fields use the `--path` grammar. Aggregation
+  stays outside — the row stream pipes to `awk`/`sort`. Streaming preserved
+  (memory O(one record), tracemalloc-enforced on a ~25 MB JSON array);
+  `--select` + `--max-tokens` refuses rather than truncates. 13 new tests
+  (50 total).
 - 2026-07-12: v0.2.0 — JSONL record addressing and raw extraction
   (ADR-004, from docs/known-issues/archive/structo-jsonl-no-record-indexing.md).
   A leading `[N]` in `--path` zooms into JSONL record N; new `--raw`

@@ -23,13 +23,15 @@ Agents frequently `cat` a 2 MB JSON or CSV file just to learn its structure, pay
 
 - `structo FILE` — summarize a file (format auto-detected).
 - `--path a.b[0].c` — zoom into a JSON/YAML subtree.
+- `--raw --path ...` — print the exact value at `--path` instead of a schema (added in v0.2.0, ADR-004).
+- `--select f1,f2` — print one TSV row per record instead of a schema, for piping to `awk`/`sort` (added in v0.3.0, ADR-005).
 - `--sample N` — control sample size.
-- `--max-tokens N` — cap output; degrade by reducing samples and collapsing deep nesting before dropping top-level structure.
+- `--max-tokens N` — cap output; degrade by reducing samples and collapsing deep nesting before dropping top-level structure. `--raw` and `--select` refuse instead, since neither can be summarized harder without lying.
 
 ## Non-goals
 
 - Full statistical profiling or data-quality reporting.
-- Transforming, querying, or extracting data values (use `jq`/`xread`-style tools).
+- Transforming or querying data (use `jq`/`xread`-style tools). *Amended by ADR-004 and ADR-005:* extracting values is in scope where the alternative is a hand-written script — `--raw` for one value, `--select` for one field across every record. What stays out is anything with cross-record state: no aggregation (`--group-by`/`--sum`), no filtering, no sorting, no expressions. structo emits rows; `awk` and `sort` reduce them.
 - Source-code summarization (that is `repomap`/`xread`).
 
 ## Acceptance criteria
@@ -39,6 +41,7 @@ Agents frequently `cat` a 2 MB JSON or CSV file just to learn its structure, pay
 - CSV output includes per-column type, null rate, min/max, cardinality, and exactly 3 sample rows.
 - Log output includes timestamp format, line count, top message templates, and first/last lines.
 - `--path` zooms into the named subtree; invalid paths produce a short error.
+- `--select` emits a header plus exactly one row per record for every record-shaped format, never dropping or reordering records, and errors with empty stdout when the target isn't record-shaped.
 - Memory stays bounded on a large fixture (streaming verified).
 - `--max-tokens` keeps output within budget.
 - Fixture tests exist for every supported format.

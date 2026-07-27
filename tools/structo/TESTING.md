@@ -8,8 +8,9 @@ format, plus a large generated file for the streaming guarantee.
 - `tests/fixtures/` — `sample.json` (nested, optional keys, large array),
   `sample.jsonl`, `sample.yaml`, `sample.csv`, `sample.tsv`, `sample.xml`,
   `sample.log` (known timestamp format and repeated templates).
-- A generator producing a ~25 MB JSONL on the fly for the memory-bound
-  test (never committed; scaled down from the planned multi-hundred-MB —
+- Generators producing a ~25 MB JSONL and a ~25 MB single-array JSON on
+  the fly for the memory-bound tests (summary and `--select` respectively;
+  never committed; scaled down from the planned multi-hundred-MB —
   the bound is size-independent since parsing is per line, and the suite
   stays fast).
 
@@ -25,14 +26,24 @@ format, plus a large generated file for the streaming guarantee.
   cluster ids/numbers correctly; first/last lines present.
 - **Zoom** — `--path a.b[0].c` summarizes only the subtree; invalid path
   yields a short error and nonzero exit.
-- **Streaming** — peak memory stays bounded (O(schema+samples)) on the
-  generated large file, asserted via resource tracking.
+- **Projection** — `--select` emits header + one row per record for jsonl,
+  JSON arrays (top level and at `--path`), YAML sequences and CSV/TSV;
+  dotted/indexed fields, missing vs `null` cells, container cells, tab and
+  newline scrubbing, unparsable lines skipped as in the summary; every
+  error path (with `--raw`, jsonl with `--path`, non-array target, missing
+  path, non-record format, empty field) exits 2 with *nothing* on stdout.
+- **Streaming** — peak memory stays bounded (O(schema+samples), and
+  O(one record) under `--select`) on the generated large files, asserted
+  via resource tracking.
 - **Token cap** — trimming order: sample records → deep nesting collapse →
-  distribution detail; top-level structure always survives.
+  distribution detail; top-level structure always survives. `--select`
+  refuses over budget (exit 2, no partial output) and prints every row
+  under it.
 - **Determinism** — identical output across repeated runs for every fixture
   (sampling is first-N, no RNG — ADR-003 as amended).
 
 ## Running
 
-`python -m pytest` from `tools/structo/`. The memory test is marked `slow`
-(`-m "not slow"` skips it); YAML tests skip when PyYAML is absent.
+`python -m pytest` from `tools/structo/` (50 tests). The two memory tests
+are marked `slow` (`-m "not slow"` skips them); YAML tests skip when PyYAML
+is absent.

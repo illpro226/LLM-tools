@@ -1,6 +1,6 @@
 # structo Architecture
 
-Status: implemented (v0.1.0) as a single file, `structo.py` (stdlib;
+Status: implemented (v0.3.0) as a single file, `structo.py` (stdlib;
 PyYAML optional for YAML).
 
 ## Overview
@@ -42,6 +42,15 @@ model ──► render(level)*  ──► fit(levels, budget) picks the report
   `path:line`.
 - **XML summarizer** — `iterparse` tag tree with element counts,
   attribute counts, and text presence; `elem.clear()` keeps memory flat.
+- **Value paths** (`extract_raw`, `select_rows`) — the two modes that
+  print data rather than shape, both bypassing `Shape` and `fit`.
+  `extract_raw` walks the event stream to one value (`_seek`/`_extract`
+  materialize only the target subtree). `select_rows` pulls records one
+  at a time from `iter_records` — jsonl lines, the array reached by
+  `_seek` in a JSON/YAML stream, or `csv.reader` rows — and maps each
+  through `_walk` per field, so state stays O(one record). Both refuse
+  under `--max-tokens` rather than truncate; `--select` measures in a
+  separate pass first so a refusal never leaves partial rows on stdout.
 - **Renderer / budget** (`fit`) — each format exposes render levels from
   most to least detailed; the first within `--max-tokens` (bytes/4) wins.
   Trim order: examples/sample rows → nesting depth + distribution detail
@@ -56,6 +65,11 @@ model ──► render(level)*  ──► fit(levels, budget) picks the report
   figure a cap or sample touched. Lengths and line counts stay exact.
 - One summarizer per format behind a common shape (ADR-002, amended:
   JSON/JSONL/YAML share the event vocabulary and one driver).
+- Value extraction is in scope, aggregation is not (ADR-004, ADR-005):
+  `--raw` for one value, `--select` for one field across every record;
+  anything with cross-record state (group-by, sum, filter, sort) is left
+  to `awk`/`sort` downstream, which keeps the projection a pure per-record
+  map and ADR-001 intact.
 
 ## Dependencies
 

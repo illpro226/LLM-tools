@@ -24,6 +24,18 @@
 - `--max-tokens N` trimming samples → nesting depth → distribution detail;
   tests at descending budgets.
 
+## M5 — Record addressing and value extraction — done (v0.2.0)
+
+- `--path "[N]"` picks JSONL record N; `--raw` prints the exact value at
+  `--path` instead of a schema (ADR-004).
+
+## M6 — Projection — done (v0.3.0)
+
+- `--select f1,f2` emits one TSV row per record for piping to `awk`/`sort`
+  (ADR-005), covering jsonl, JSON arrays, YAML sequences and CSV/TSV.
+
 ## Later
 
 - Parquet/compressed-input support if demand appears.
+- Not planned: in-tool aggregation (`--group-by`/`--sum`) — decided
+  against in ADR-005, not deferred.

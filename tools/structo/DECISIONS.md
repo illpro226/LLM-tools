@@ -59,3 +59,38 @@ untouched (capped strings are fine for examples). `--raw` with
 `--max-tokens` refuses with exit 2 instead of truncating — an exact value
 can't be summarized harder, and truncating mid-value would violate the
 suite output invariant; the cap keeps full force in schema mode.
+
+## ADR-005: `--select` projects records as TSV; aggregation stays out — Accepted (2026-07-26)
+
+Context: docs/known-issues/archive/structo-cannot-aggregate-across-jsonl-records.md
+— answering "which tool runs net-negative?" over the suite's own
+`.savings/events.jsonl` needed a group-by sum. structo could describe the
+file's shape and address one record, but nothing in the suite could get at
+the *values* across records, so the analysis fell back to four throwaway
+Python scripts. The gap is self-inflicted and recurring: the same question
+returns every time the savings record looks wrong.
+Decision: add `--select f1,f2` — one TSV row per record, header line of the
+literal field specs, fields addressed with the existing `--path` grammar
+(`a.b`, `tags[0]`). Records are jsonl lines, a top-level JSON array or a
+YAML sequence (or the array at `--path`), or CSV/TSV data rows. Aggregation
+itself — `--group-by`, `--sum`, sorting — is explicitly *not* added: the
+row stream pipes to `awk`/`sort`, which already do it and do it outside the
+agent's context.
+Consequences: structo gains a second output mode but no query language, and
+the projection is a pure per-record map with no cross-record state, so
+ADR-001 holds (memory is O(one record), test-enforced on a generated ~25 MB
+JSON array). The cost is that the caller writes an `awk` line instead of a
+flag — deliberate, since a query language inside structo would be the
+twelfth tool the closed list (docs/decisions/0003) exists to prevent, and
+the alternative reading of the issue ("this isn't structo's job at all")
+would leave the gap open for a tool nobody is going to build.
+TSV forces three encoding choices: a missing field is an empty cell while a
+JSON `null` renders `null` (both coerce to 0 in `awk`, and the distinction
+survives for callers who care); containers render as compact JSON; tabs and
+newlines inside string values become spaces, because a row that breaks into
+two rows silently corrupts whatever the caller sums. Line endings are
+pinned to `\n` even on Windows — this output is machine-bound, not console
+output. Like `--raw`, `--select` with `--max-tokens` refuses (exit 2)
+rather than truncating: a projection that dropped records would corrupt the
+downstream sum, and it measures in a first pass before printing so nothing
+partial reaches stdout.

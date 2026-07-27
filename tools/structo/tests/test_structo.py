@@ -329,6 +329,119 @@ def test_budget_csv_drops_samples_then_detail(capsys):
     assert "columns (4)" in tiny                # top level never dropped
 
 
+# ---------------------------------------------------------------- --select
+
+def rows(out):
+    return [l.split("\t") for l in out.splitlines()]
+
+
+def test_select_jsonl_one_row_per_record(capsys):
+    out = ok([fx("sample.jsonl"), "--select", "user,age,email"], capsys)
+    got = rows(out)
+    assert got[0] == ["user", "age", "email"]
+    assert len(got) == 6                        # header + 5 records
+    assert got[1] == ["alice", "31", "a@x.io"]
+    assert [r[2] for r in got[1:]].count("") == 2    # 60% present
+
+
+def test_select_json_array_at_path(capsys):
+    out = ok([fx("sample.json"), "--select", "id,value", "--path", "items"],
+             capsys)
+    got = rows(out)
+    assert got[0] == ["id", "value"]
+    assert len(got) == 26                       # all 25, never sampled
+    assert got[1] == ["1", "1.5"]
+
+
+def test_select_json_top_level_array(tmp_path, capsys):
+    arr = tmp_path / "arr.json"
+    arr.write_text('[{"a": 1}, {"a": 2}]', encoding="utf-8")
+    assert rows(ok([str(arr), "--select", "a"], capsys)) == \
+        [["a"], ["1"], ["2"]]
+
+
+def test_select_csv_projects_and_reorders(capsys):
+    out = ok([fx("sample.csv"), "--select", "name,id"], capsys)
+    got = rows(out)
+    assert got[0] == ["name", "id"]
+    assert got[1] == ["Alice", "1"]
+    assert len(got) == 6                        # header + 5 rows
+
+
+@pytest.mark.skipif(not has_yaml(), reason="PyYAML not installed")
+def test_select_yaml_sequence(capsys):
+    out = ok([fx("sample.yaml"), "--select", "name,enabled",
+              "--path", "features"], capsys)
+    assert rows(out) == [["name", "enabled"], ["alpha", "true"],
+                         ["beta", "false"]]
+
+
+def test_select_dotted_indexed_and_container_fields(tmp_path, capsys):
+    src = tmp_path / "r.jsonl"
+    src.write_text(
+        json.dumps({"id": 1, "m": {"h": "n1"}, "tags": ["a", "b"]}) + "\n"
+        + json.dumps({"id": 2, "tags": []}) + "\n", encoding="utf-8")
+    got = rows(ok([str(src), "--select", "id,m.h,tags,tags[0],nope"],
+                  capsys))
+    assert got[1] == ["1", "n1", '["a","b"]', "a", ""]
+    assert got[2] == ["2", "", "[]", "", ""]    # missing renders empty
+
+
+def test_select_cells_never_break_the_row(tmp_path, capsys):
+    src = tmp_path / "r.jsonl"
+    src.write_text(json.dumps({"s": "one\ttwo\nthree", "n": None}) + "\n",
+                   encoding="utf-8")
+    out = ok([str(src), "--select", "s,n"], capsys)
+    assert len(out.splitlines()) == 2
+    assert rows(out)[1] == ["one two three", "null"]
+
+
+def test_select_skips_unparsable_lines_like_the_summary(tmp_path, capsys):
+    src = tmp_path / "r.jsonl"
+    src.write_text('{"a": 1}\nnot json\n\n{"a": 2}\n', encoding="utf-8")
+    assert rows(ok([str(src), "--select", "a"], capsys)) == \
+        [["a"], ["1"], ["2"]]
+
+
+def test_select_refuses_budget_rather_than_dropping_records(capsys):
+    code, out, err = run([fx("sample.jsonl"), "--select", "user,age",
+                          "--max-tokens", "2"], capsys)
+    assert code == 2
+    assert "never drops records" in err
+    assert "5 rows" in err
+    assert out == ""                            # nothing printed at all
+
+
+def test_select_within_budget_prints_every_row(capsys):
+    out = ok([fx("sample.jsonl"), "--select", "user", "--max-tokens", "500"],
+             capsys)
+    assert len(rows(out)) == 6
+
+
+def test_select_errors(capsys):
+    cases = [
+        ([fx("sample.jsonl"), "--select", "user", "--raw"], "pick one"),
+        ([fx("sample.jsonl"), "--select", "user", "--path", "[0]"],
+         "every jsonl line as a record"),
+        ([fx("sample.json"), "--select", "a", "--path", "owner"],
+         "is not an array"),
+        ([fx("sample.json"), "--select", "a", "--path", "nope"],
+         "--path not found"),
+        ([fx("sample.log"), "--select", "a"], "record-shaped data"),
+        ([fx("sample.jsonl"), "--select", "user,,age"], "empty field"),
+    ]
+    for argv, want in cases:
+        code, out, err = run(argv, capsys)
+        assert code == 2, argv
+        assert want in err, (argv, err)
+        assert out == "", argv          # no header emitted before an error
+
+
+def test_select_is_deterministic(capsys):
+    argv = [fx("sample.jsonl"), "--select", "user,age,email"]
+    assert ok(argv, capsys) == ok(argv, capsys)
+
+
 # ------------------------------------------------------------ determinism
 
 def test_output_is_deterministic(capsys):
@@ -363,3 +476,22 @@ def test_memory_bounded_on_large_jsonl(tmp_path, capsys):
     tracemalloc.stop()
     assert "records 120000" in out
     assert peak_mb < 15, "peak %.1f MB not O(schema+samples)" % peak_mb
+
+
+@pytest.mark.slow
+def test_select_memory_bounded_on_large_json_array(tmp_path, capsys):
+    import tracemalloc
+    big = tmp_path / "big.json"
+    with open(big, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write('{"rows": [')
+        for i in range(120_000):                # ~25 MB
+            fh.write("," if i else "")
+            fh.write(json.dumps({"id": i, "note": "x" * 160}))
+        fh.write("]}")
+    assert os.path.getsize(big) / 1e6 > 20
+    tracemalloc.start()
+    out = ok([str(big), "--select", "id", "--path", "rows"], capsys)
+    peak_mb = tracemalloc.get_traced_memory()[1] / 1e6
+    tracemalloc.stop()
+    assert len(out.splitlines()) == 120_001
+    assert peak_mb < 25, "peak %.1f MB not O(one record)" % peak_mb

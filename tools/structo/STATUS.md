@@ -1,6 +1,6 @@
 # structo Status
 
-Implemented (v0.2.0) and passing tests.
+Implemented (v0.3.0) and passing tests.
 
 - `structo.py` — single-file CLI printing the schema and shape of a data
   file instead of its content. Formats: JSON, JSONL, YAML (via PyYAML —
@@ -31,11 +31,25 @@ Implemented (v0.2.0) and passing tests.
   parses one line, JSON uses a full-fidelity tokenizer mode that
   materializes only the target subtree. With `--max-tokens` it refuses
   (exit 2) rather than truncates (ADR-004).
+- `--select f1,f2` prints one TSV row per record instead of a schema —
+  header line of the field specs, then the values (ADR-005). Records are
+  jsonl lines, a top-level JSON array / YAML sequence or the array at
+  `--path`, or CSV/TSV data rows; fields use the `--path` grammar
+  (`a.b`, `tags[0]`). Missing fields are empty cells, JSON `null` renders
+  `null`, containers render as compact JSON, and tabs/newlines inside
+  values become spaces so a row is always one row. Line endings are `\n`
+  on every platform. Streams like everything else (memory O(one record)).
+  With `--max-tokens` it refuses (exit 2) rather than drops records, and
+  measures before printing so nothing partial reaches stdout. Aggregation
+  is deliberately absent — pipe to `awk`/`sort`:
+  `structo events.jsonl --select tool,bytes | awk -F'\t' 'NR>1{s[$1]+=$2}...'`
 - `--max-tokens N` (bytes/4) degrades by whole levels: drop
   examples/sample rows → collapse deep nesting and distribution detail →
   top-level structure only (never dropped).
-- Tests: `tests/test_structo.py` (37 tests) over one committed fixture
-  per format plus the generated large file (slow-marked).
+- Tests: `tests/test_structo.py` (50 tests) over one committed fixture
+  per format plus the generated large files (slow-marked).
 
-Not done / later: XML has no `--path` zoom; no Parquet/compressed inputs;
-YAML support requires PyYAML (yaml tests skip without it).
+Not done / later: XML has no `--path` zoom and no `--select`; no
+Parquet/compressed inputs; YAML support requires PyYAML (yaml tests skip
+without it). Aggregation (`--group-by`/`--sum`) is a decided no, not a
+backlog item (ADR-005).
