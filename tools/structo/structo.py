@@ -34,7 +34,7 @@ import os
 import re
 import sys
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 DEFAULT_SAMPLE = 10
 EXAMPLES_PER_NODE = 2
@@ -1068,13 +1068,15 @@ def summarize(path, fmt, sample, target):
 
 
 def _relax_stdout(newline=None):
-    """Never die on an unencodable byte; --select also pins \\n endings so
-    the TSV pipes the same way on every platform."""
+    """Pin UTF-8 so echoed values survive a cp1252 console default, and never
+    die on an unencodable byte; --select also pins \\n endings so the TSV pipes
+    the same way on every platform."""
     try:
         if newline is None:
-            sys.stdout.reconfigure(errors="replace")
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         else:
-            sys.stdout.reconfigure(errors="replace", newline=newline)
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace",
+                                   newline=newline)
     except (AttributeError, ValueError):
         pass
 

@@ -1,5 +1,7 @@
 import os
 import shutil
+import subprocess
+import sys
 
 import pytest
 
@@ -7,6 +9,8 @@ import sgrep
 
 FIX = os.path.join(os.path.dirname(__file__), "fixtures")
 TREE = os.path.join(FIX, "tree")
+SGREP = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sgrep.py")
 
 RG = shutil.which("rg") or (
     os.environ.get("SGREP_RG")
@@ -284,3 +288,36 @@ def test_cli_deterministic(capsys):
     _, out1, _ = run(rg_args(), capsys)
     _, out2, _ = run(rg_args(), capsys)
     assert out1 == out2
+
+
+# --------------------------------------------------------------- encoding
+
+EM_DASH = "\u2014"
+
+
+def utf8_probe(tmp_path, text):
+    """A file whose content the console encoding cannot represent."""
+    p = tmp_path / "probe.txt"
+    p.write_text(text, encoding="utf-8")
+    return p
+
+
+def run_bytes(argv, cwd, encoding="cp1252"):
+    """Subprocess with a non-UTF-8 stdio encoding forced, capturing raw bytes.
+    In-process capsys can't see this: pytest's capture replaces sys.stdout
+    with a stream reconfigure() does not apply to."""
+    env = dict(os.environ, PYTHONIOENCODING=encoding)
+    proc = subprocess.run([sys.executable, SGREP, *argv], cwd=str(cwd),
+                          capture_output=True, env=env)
+    return proc.returncode, proc.stdout
+
+
+@needs_rg
+def test_non_ascii_content_survives_a_cp1252_console(tmp_path):
+    """A mangled line copied back into an Edit is a silent corruption, so
+    matched content must round-trip byte-for-byte."""
+    utf8_probe(tmp_path, "needle a %s here\n" % EM_DASH)
+    code, out = run_bytes(["--rg", RG, "needle", "probe.txt"], tmp_path)
+    assert code == 0
+    assert EM_DASH.encode("utf-8") in out
+    assert b"?" not in out

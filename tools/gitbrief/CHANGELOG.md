@@ -1,5 +1,8 @@
 # gitbrief Changelog
 
+- 2026-07-27: v0.1.1 — stdout pinned to UTF-8 so echoed file content keeps
+  its non-ASCII characters on Windows. Closes the gitbrief half of
+  docs/known-issues/non-ascii-output-mangled-on-windows.md.
 - 2026-07-08: v0.1.0 — initial implementation. Single-file stdlib CLI over
   git plumbing: default status+diffstat view with drift and last commits,
   `hunks` (U1), `show` (single-file full diff), `log` filters, `pr BASE`

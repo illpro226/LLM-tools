@@ -1,5 +1,7 @@
 # tokq Changelog
 
+- 2026-07-27: v0.1.1 — stdout pinned to UTF-8 so non-ASCII paths and lint
+  excerpts survive a cp1252 console.
 - 2026-07-10: v0.1.1 — `dir` and `lint` output now uses `/` path separators
   on every platform (fixes known-issue
   `tokq-dir-backslash-paths-on-windows`; the Windows-only test failure in

@@ -1,5 +1,7 @@
 # repoindex Changelog
 
+- 2026-07-27: stdout pinned to UTF-8 so non-ASCII paths and `sql` rows
+  survive a cp1252 console (suite-wide fix).
 - 2026-07-06: Added initial documentation scaffold.
 - 2026-07-11: v0.1.5 — test seeding now links a test that imports a
   package to the package's `__init__.py` and to the modules it names

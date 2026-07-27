@@ -1,5 +1,7 @@
 # rq Changelog
 
+- 2026-07-27: stdout pinned to UTF-8 so non-ASCII symbol names and paths
+  survive a cp1252 console (suite-wide fix).
 - 2026-07-11: v0.1.2 — the freshness guard passes the `shutil.which()`-
   resolved path to `subprocess` instead of the bare command name: on
   Windows the PATH entry for `repoindex` is a `.cmd` shim, which

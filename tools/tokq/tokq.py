@@ -20,7 +20,7 @@ import argparse
 import os
 import sys
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 BYTES_PER_TOKEN = 3.7  # fallback heuristic divisor
 
@@ -388,7 +388,17 @@ def _add_common(parser):
                         version="tokq %s" % __version__)
 
 
+def _pin_utf8():
+    """Paths and lint excerpts are echoed verbatim; a cp1252 console default
+    would replace anything non-ASCII with `?`."""
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
+
 def main(argv=None):
+    _pin_utf8()
     argv = sys.argv[1:] if argv is None else list(argv)
 
     if argv and argv[0] == "dir":

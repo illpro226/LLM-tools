@@ -28,7 +28,7 @@ import os
 import re
 import sys
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 PY_EXTS = {".py", ".pyi"}
 TS_EXTS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"}
@@ -602,8 +602,8 @@ def main(argv=None):
         print("xread: %s" % exc, file=sys.stderr)
         return 2
 
-    try:  # source files may carry symbols the console encoding lacks
-        sys.stdout.reconfigure(errors="replace")
+    try:  # echo file content byte-faithfully, not via a cp1252 console default
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
         pass
     if lines:

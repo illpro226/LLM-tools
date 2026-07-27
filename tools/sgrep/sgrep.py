@@ -24,7 +24,7 @@ import re
 import subprocess
 import sys
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 SHOW_ALL_LIMIT = 5    # files with <= this many matching lines show them all
 REPRESENTATIVES = 3   # distinct lines shown when a file exceeds the limit
@@ -340,8 +340,8 @@ def main(argv=None):
 
     ranked = rank(files, weights, extra)
     lines = apply_budget(ranked, files, args)
-    try:  # matched lines may carry symbols the console encoding lacks
-        sys.stdout.reconfigure(errors="replace")
+    try:  # echo matched lines byte-faithfully, not via a cp1252 console default
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
         pass
     print("\n".join(lines))

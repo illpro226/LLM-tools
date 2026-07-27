@@ -11,6 +11,13 @@ decision record in `docs/decisions/`, not just a PR.
   so any finding can be followed up with `xread`.
 - Every tool whose output can grow respects `--max-tokens N`, degrading by
   summarizing harder — never by truncating mid-thought.
+- **stdout is UTF-8, pinned at entry** — `sys.stdout.reconfigure(
+  encoding="utf-8", errors="replace")`, never the platform default. These
+  tools are the recommended substitute for reading files, so their output
+  gets reasoned over and sometimes copied back into an edit; a character
+  mangled by a cp1252 console is a silent write corruption, not just a bad
+  read. Subprocess captures of other tools' output pin `encoding="utf-8"`
+  for the same reason.
 
 ## Semantics
 

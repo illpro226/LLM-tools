@@ -27,7 +27,7 @@ import re
 import subprocess
 import sys
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 DEFAULT_COMMITS = 5
 LOG_DEFAULT_N = 10
@@ -579,8 +579,8 @@ def main(argv=None):
         print("gitbrief: %s" % exc, file=sys.stderr)
         return 2
 
-    try:
-        sys.stdout.reconfigure(errors="replace")
+    try:  # echo file content byte-faithfully, not via a cp1252 console default
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
         pass
     print("\n".join(lines))

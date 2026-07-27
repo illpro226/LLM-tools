@@ -1,5 +1,7 @@
 # xread Changelog
 
+- 2026-07-27: v0.2.1 — stdout pinned to UTF-8 so excerpted source keeps its
+  non-ASCII characters on Windows (same fix as sgrep/repomap/gitbrief).
 - 2026-07-17: v0.2.0 — Prisma schema support for `--symbol`: flat block
   scanner for `model|enum|type|view|generator|datasource NAME { ... }`
   with attached `//` comments; strings are stripped before comments so

@@ -552,7 +552,17 @@ def _shared_flags(parser):
                         help="skip the automatic `repoindex update`")
 
 
+def _pin_utf8():
+    """Test and target paths are echoed verbatim; a cp1252 console default
+    would replace anything non-ASCII with `?`."""
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
+
 def main(argv=None):
+    _pin_utf8()
     argv = list(sys.argv[1:] if argv is None else argv)
 
     if argv[:1] == ["record"]:

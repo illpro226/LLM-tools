@@ -1,5 +1,7 @@
 # runlite Changelog
 
+- 2026-07-27: v0.1.3 — stdout pinned to UTF-8 so log symbols (✕, ●, ⎯)
+  survive a cp1252 console instead of degrading to `?`.
 - 2026-07-19: v0.1.2 — a failing run whose extractor parses nothing (e.g.
   `pytest` selected by command name but the framework itself missing) now
   falls back to the generic extractor so the log tail always appears, and

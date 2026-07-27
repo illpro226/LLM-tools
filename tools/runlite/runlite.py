@@ -24,7 +24,7 @@ import subprocess
 import sys
 import time
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 EXIT_INTERNAL = 125   # runlite's own failure, never the wrapped command's
 EXIT_NOT_FOUND = 127
@@ -501,8 +501,8 @@ def main(argv=None):
         problems, tail = parse_generic(log)
     lines = render(proc.returncode, wall, ext.name, problems, tail,
                    args.max_tokens, args.full_log)
-    try:  # tool logs may carry symbols the console encoding lacks (✕, ●, ⎯)
-        sys.stdout.reconfigure(errors="replace")
+    try:  # tool logs carry symbols (✕, ●, ⎯) a cp1252 console default would eat
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
         pass
     print("\n".join(lines))

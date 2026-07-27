@@ -665,7 +665,17 @@ def _add_shared_flags(parser, top_level):
                         help="skip the automatic `repoindex update`")
 
 
+def _pin_utf8():
+    """Symbol and path text is echoed verbatim; a cp1252 console default would
+    replace anything non-ASCII with `?`."""
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
+
 def main(argv=None):
+    _pin_utf8()
     common = argparse.ArgumentParser(add_help=False)
     _add_shared_flags(common, top_level=False)
 

@@ -1,5 +1,7 @@
 # structo Changelog
 
+- 2026-07-27: v0.3.1 — stdout pinned to UTF-8 so echoed values keep their
+  non-ASCII characters on Windows (same fix as sgrep/repomap/gitbrief).
 - 2026-07-26: v0.3.0 — `--select f1,f2` projects records as TSV, one row
   per record (ADR-005, from
   docs/known-issues/archive/structo-cannot-aggregate-across-jsonl-records.md).
