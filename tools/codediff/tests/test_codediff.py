@@ -316,3 +316,39 @@ def test_json_is_not_capped_by_the_default(repo):
     """A truncated payload is not parseable, so --json stays full."""
     data = run_json(repo)
     assert isinstance(data, dict)
+
+
+# ------------------------------------------------- git discovery ceiling
+
+def test_git_env_sets_a_ceiling_at_home(monkeypatch):
+    """Without a ceiling, a run outside any project climbs to $HOME; on a
+    machine whose home is itself a repo, that silently adopts it and scans
+    the whole home tree -- a multi-minute hang that looks like work."""
+    monkeypatch.delenv("GIT_CEILING_DIRECTORIES", raising=False)
+    monkeypatch.delenv("CODEDIFF_NO_CEILING", raising=False)
+    env = codediff._git_env()
+    assert env["GIT_CEILING_DIRECTORIES"] == os.path.expanduser("~")
+
+
+def test_git_env_respects_a_user_set_ceiling(monkeypatch):
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", "/somewhere/else")
+    monkeypatch.delenv("CODEDIFF_NO_CEILING", raising=False)
+    assert codediff._git_env()["GIT_CEILING_DIRECTORIES"] == "/somewhere/else"
+
+
+def test_git_env_escape_hatch_disables_the_ceiling(monkeypatch):
+    """The one repo the ceiling excludes is a repo located exactly at
+    $HOME (a dotfiles checkout); this is how you point the tool at it."""
+    monkeypatch.delenv("GIT_CEILING_DIRECTORIES", raising=False)
+    monkeypatch.setenv("CODEDIFF_NO_CEILING", "1")
+    assert "GIT_CEILING_DIRECTORIES" not in codediff._git_env()
+
+
+def test_repo_below_the_ceiling_is_still_found(repo, monkeypatch):
+    """The ceiling stops the walk at $HOME; everything under it must still
+    resolve normally from a subdirectory."""
+    sub = repo / "nested" / "deeper"
+    sub.mkdir(parents=True)
+    monkeypatch.chdir(sub)
+    root = codediff._git("rev-parse", "--show-toplevel").strip()
+    assert os.path.realpath(root) == os.path.realpath(str(repo))

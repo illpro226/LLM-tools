@@ -107,7 +107,7 @@ python -m pytest        # run tests
 ./repomap.py [DIR] [--focus PATH] [--max-tokens N]   # tree + ranked symbol outlines
 
 cd tools/gitbrief
-python -m pytest        # run tests (builds temp repos; needs git on PATH)
+python -m pytest        # run tests (30 tests; builds temp repos, needs git on PATH)
 ./gitbrief.py [hunks [FILE...] | show FILE | log | pr BASE]   # layered git views
 
 cd tools/structo
@@ -134,7 +134,7 @@ python -m pytest        # run tests (23 tests; record test needs coverage.py, el
 ./testmap.py record -- pytest [ARGS]  # record exact coverage into the shared index
 
 cd tools/codediff
-python -m pytest        # run tests (34 tests; scripted temp repos, needs git + sibling repoindex)
+python -m pytest        # run tests (38 tests; scripted temp repos, needs git + sibling repoindex)
 ./codediff.py [REF|A..B] [--staged] [--json] [--max-tokens N]   # semantic diff summary
 ```
 
@@ -156,12 +156,12 @@ here. What bites you if you don't know it:
 | `xread` | Python via `ast`; JS/TS, markdown and Prisma via heuristic scanners, so spans can be approximate. |
 | `sgrep` | needs the `rg` binary at runtime (PATH, `--rg`, or `SGREP_RG`). Exits 1 on no matches, 2 on error. |
 | `repomap` | `--focus PATH` narrows, it does not merely rank: everything outside the focus collapses to one line. |
-| `gitbrief` | read-only git plumbing; renames off, `--no-optional-locks`. |
+| `gitbrief` | read-only git plumbing; renames off, `--no-optional-locks`. Git discovery stops at `$HOME` so a run outside a project can't adopt a dotfiles repo and scan your home tree (`GITBRIEF_NO_CEILING=1` overrides). |
 | `structo` | streams everything (memory O(schema+samples)). `--select`/`--raw` **refuse rather than truncate** when over an explicit budget — they feed `awk`/`sort`, not context. A leading `[N]` in `--path` picks JSONL record N. |
 | `repoindex` | `extract()` is pure and filesystem-free (`codediff` reuses it on git blobs). Every ref is tagged `resolved` or `heuristic`, never dropped. `update` is incremental and preserves `testmap record` coverage rows. |
 | `rq` | queries the index and never parses source — a data gap is a repoindex bug. Runs `repoindex update` first (`--no-update` to skip). Exit 1 symbol not found, 2 no index. |
 | `testmap` | never parses source; `--root` must be the work-tree top. `record` is pytest-only. Exit 1 changed files undeterminable, 2 no index. |
-| `codediff` | there is no `--llm` flag — `--json` **is** the narrator payload. Risk is a flat list of explainable flags, never a grade (0002). Exit 0 ok, 2 usage/git error. |
+| `codediff` | there is no `--llm` flag — `--json` **is** the narrator payload. Risk is a flat list of explainable flags, never a grade (0002). Same `$HOME` git ceiling as `gitbrief` (`CODEDIFF_NO_CEILING=1`). Exit 0 ok, 2 usage/git error. |
 
 For any other tool, there is nothing to run yet — start from that tool's `PRD.md` and the corresponding bootstrap prompt in `START.md`, and follow the suite-wide conventions above plus `INVARIANTS.md`.
 

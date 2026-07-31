@@ -38,7 +38,7 @@ try:
 except ImportError:  # pragma: no cover - Python < 3.11
     tomllib = None
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 # ADR-007: the token cap is on by default. A pre-commit summary is read
 # while the context already holds the work that produced the diff, so it
@@ -79,13 +79,39 @@ class CodediffError(Exception):
 
 # ------------------------------------------------------------- plumbing ---
 
+def _git_env():
+    """Environment for git discovery, with a ceiling on the upward walk.
+
+    Without a ceiling, running this tool anywhere outside a project lets
+    git climb all the way to $HOME. On a machine whose home directory is
+    itself a repo (a dotfiles checkout - common, and true of this one),
+    every such run silently adopts that repo and scans the entire home
+    tree: observed as a multi-minute hang, not an error, which is the
+    worst failure shape because it looks like the tool is working.
+
+    Stopping at $HOME still finds every repo *below* it normally - the
+    walk only stops once it reaches the ceiling. A repo located exactly
+    at $HOME is the one case this excludes, so set CODEDIFF_NO_CEILING=1
+    (or your own GIT_CEILING_DIRECTORIES, which is respected as-is) when
+    that repo is the one you mean.
+    """
+    env = dict(os.environ)
+    if env.get("CODEDIFF_NO_CEILING") or "GIT_CEILING_DIRECTORIES" in env:
+        return env
+    home = os.path.expanduser("~")
+    if home and os.path.isdir(home):
+        env["GIT_CEILING_DIRECTORIES"] = home
+    return env
+
+
 def _git(*args, ok_codes=(0,)):
     """Run one read-only git command; every call is a reproducible argv."""
     argv = ["git", "--no-optional-locks", "--no-pager",
             "-c", "color.ui=false", "-c", "core.quotepath=false", *args]
     try:
         proc = subprocess.run(argv, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace")
+                              encoding="utf-8", errors="replace",
+                              env=_git_env())
     except FileNotFoundError:
         raise CodediffError("git binary not found on PATH")
     if proc.returncode not in ok_codes:

@@ -1,6 +1,6 @@
 # gitbrief Status
 
-Implemented (v0.2.0) and passing tests.
+Implemented (v0.2.1) and passing tests.
 
 - `gitbrief.py` — single-file, stdlib-only CLI over subprocess `git`
   plumbing (`status --porcelain=v2 --branch`, `diff --numstat`,
@@ -21,7 +21,9 @@ Implemented (v0.2.0) and passing tests.
   levels: table→counts, hunk context→headers→counts, list shortening.
 - `--max-tokens` defaults to 2000 rather than unbounded (docs/decisions/0005);
   `--max-tokens 0` restores unbounded output.
-- Tests: `tests/test_gitbrief.py` (26 tests) against temp repos scripted
+- git discovery is bounded by `GIT_CEILING_DIRECTORIES`, defaulted to
+  `$HOME` (ADR-007); `GITBRIEF_NO_CEILING=1` overrides.
+- Tests: `tests/test_gitbrief.py` (30 tests) against temp repos scripted
   by the suite (upstream drift via a local bare remote, staged + unstaged
   + untracked with exact counts, feature branch with known symbol edits);
   host git config is neutralized. A repo-state snapshot asserts every

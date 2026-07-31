@@ -1,5 +1,11 @@
 # gitbrief Changelog
 
+- 2026-07-31: v0.2.1 — git repository discovery is bounded by
+  `GIT_CEILING_DIRECTORIES`, defaulted to `$HOME` (ADR-007). Without it, a
+  run outside any project walked up to a home directory that is itself a
+  repo and scanned the whole tree — a multi-minute hang, not an error.
+  Repos below `$HOME` are unaffected; `GITBRIEF_NO_CEILING=1` or your own
+  `GIT_CEILING_DIRECTORIES` overrides. 4 new tests (30 total).
 - 2026-07-31: v0.2.0 — `--max-tokens` now defaults to 2000 instead of unbounded
   (ADR-006, docs/decisions/0005-budgets-on-by-default.md); `--max-tokens 0`
   restores the old behaviour. `gitbrief hunks` on this repo's working diff

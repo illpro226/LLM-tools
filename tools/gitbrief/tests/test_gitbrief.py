@@ -302,3 +302,39 @@ def test_small_diff_is_untouched_by_the_default(repo, monkeypatch, capsys):
     deflt = ok([], capsys)
     unbounded = ok(["--max-tokens", "0"], capsys)
     assert deflt == unbounded
+
+
+# ------------------------------------------------- git discovery ceiling
+
+def test_git_env_sets_a_ceiling_at_home(monkeypatch):
+    """Without a ceiling, a run outside any project climbs to $HOME; on a
+    machine whose home is itself a repo, that silently adopts it and scans
+    the whole home tree -- a multi-minute hang that looks like work."""
+    monkeypatch.delenv("GIT_CEILING_DIRECTORIES", raising=False)
+    monkeypatch.delenv("GITBRIEF_NO_CEILING", raising=False)
+    env = gitbrief._git_env()
+    assert env["GIT_CEILING_DIRECTORIES"] == os.path.expanduser("~")
+
+
+def test_git_env_respects_a_user_set_ceiling(monkeypatch):
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", "/somewhere/else")
+    monkeypatch.delenv("GITBRIEF_NO_CEILING", raising=False)
+    assert gitbrief._git_env()["GIT_CEILING_DIRECTORIES"] == "/somewhere/else"
+
+
+def test_git_env_escape_hatch_disables_the_ceiling(monkeypatch):
+    """The one repo the ceiling excludes is a repo located exactly at
+    $HOME (a dotfiles checkout); this is how you point the tool at it."""
+    monkeypatch.delenv("GIT_CEILING_DIRECTORIES", raising=False)
+    monkeypatch.setenv("GITBRIEF_NO_CEILING", "1")
+    assert "GIT_CEILING_DIRECTORIES" not in gitbrief._git_env()
+
+
+def test_repo_below_the_ceiling_is_still_found(repo, monkeypatch):
+    """The ceiling stops the walk at $HOME; everything under it must still
+    resolve normally from a subdirectory."""
+    sub = repo / "nested" / "deeper"
+    sub.mkdir(parents=True)
+    monkeypatch.chdir(sub)
+    root = gitbrief._git("rev-parse", "--show-toplevel").strip()
+    assert os.path.realpath(root) == os.path.realpath(str(repo))
