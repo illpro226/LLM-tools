@@ -40,3 +40,30 @@ A narrow fix would be to extend the existing `-1` carve-out to `--oneline`
 with an explicit small `-N` (say N ≤ 10), which stays bounded and cannot be
 widened into a dump — `git log --oneline` with *no* count should stay denied,
 since that is unbounded and is the actual failure mode the rule targets.
+
+## 2026-07-31: the denial takes the whole compound command with it
+
+Hit a sharper version of this while committing. The command was:
+
+```
+git add CLAUDE.md && git commit -q -F - <<'EOF' ... EOF
+git push -q origin main && git log --oneline -3
+```
+
+The trailing `git log --oneline -3` tripped the rule, and the hook denies
+the **entire Bash call** — so the add, the commit and the push never ran
+either. The failure is silent in the sense that matters: the denial message
+talks only about `git log`, so the obvious reading is "the log part was
+refused", not "none of your work happened". It is easy to move on believing
+a commit exists when it does not.
+
+This raises the priority of the carve-out above, but the deeper point is
+separate from the `-N` question: a *deny* verdict on a compound command is
+all-or-nothing, and the message should say so. Either the reason line should
+name the consequence ("denied — no part of this command ran; the match was
+`git log --oneline -3`"), or the guidance should be to run the flagged
+sub-command separately. Cheap to fix in the message text, and it removes a
+class of silent no-ops that has now bitten once.
+
+Workaround in the meantime: never chain a possibly-denied read command onto
+a state-changing one. Commit and push on their own line, orient separately.
