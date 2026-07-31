@@ -54,3 +54,18 @@ Consequences: symbol lists are always available and deterministic with
 zero dependencies; language coverage is narrower than tree-sitter would
 give (extendable file-by-file); the omission note keeps the gap visible
 rather than silent.
+
+## ADR-006: `--max-tokens` defaults to 2000 — Accepted (2026-07-31)
+
+`hunks` on a large working diff is exactly the call that floods a context
+window, and never the call anyone thinks to guard — the diff is big
+*because* the work went well. On this repo the default takes `gitbrief
+hunks` from ~2,900 tokens to ~310. `--max-tokens 0` restores unbounded
+output.
+
+Suite-wide rationale and the measured evidence are in
+`docs/decisions/0005-budgets-on-by-default.md`: across 661 logged calls in
+the first 18 days of use, 1.4%% passed `--max-tokens`, while 3%% of calls
+produced 8%% of all output. An opt-in cap protects only the caller who
+already suspected the output would be large — the one who did not need
+protecting.

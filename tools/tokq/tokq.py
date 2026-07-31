@@ -391,10 +391,11 @@ def _add_common(parser):
 def _pin_utf8():
     """Paths and lint excerpts are echoed verbatim; a cp1252 console default
     would replace anything non-ASCII with `?`."""
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    except (AttributeError, ValueError):
-        pass
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
 
 
 def main(argv=None):

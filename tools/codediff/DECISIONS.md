@@ -82,3 +82,20 @@ change stops reading as a riskier one. The cost is that a semantically
 interesting edit to a test helper is reported only as a count; the file and
 its `path:line` are still listed, so `xread`/`gitbrief` can follow up. No new
 flag to exclude tests is needed, and none was added.
+
+## ADR-007: `--max-tokens` defaults to 3000; `--json` stays full — Accepted (2026-07-31)
+
+A pre-commit summary is read while the context already holds the work that
+produced the diff, so it is the worst moment to spend thousands of tokens
+unasked. The default is 3000 against a measured 95th percentile of ~3281.
+
+`--json` is exempt from the default and from any cap: it is the narrator
+payload (ADR-005), and a truncated payload is not parseable. `--max-tokens
+0` restores unbounded text output.
+
+Suite-wide rationale and the measured evidence are in
+`docs/decisions/0005-budgets-on-by-default.md`: across 661 logged calls in
+the first 18 days of use, 1.4%% passed `--max-tokens`, while 3%% of calls
+produced 8%% of all output. An opt-in cap protects only the caller who
+already suspected the output would be large — the one who did not need
+protecting.

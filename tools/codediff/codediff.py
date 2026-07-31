@@ -38,7 +38,13 @@ try:
 except ImportError:  # pragma: no cover - Python < 3.11
     tomllib = None
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
+
+# ADR-007: the token cap is on by default. A pre-commit summary is read
+# while the context already holds the work that produced the diff, so it
+# is the worst moment to spend thousands of tokens unasked. `--json` stays
+# full (a truncated payload is not parseable); 0 restores unbounded text.
+DEFAULT_MAX_TOKENS = 3000
 
 DEFAULT_KEYWORDS = ("auth", "crypto", "payment", "migration",
                     "secret", "password", "credential")
@@ -734,6 +740,11 @@ def to_json(label, entries, out, flags, notes, unanalyzed):
 # ------------------------------------------------------------------ CLI ---
 
 def main(argv=None):
+    try:  # error text carries the same non-ASCII punctuation as output;
+        # a cp1252 console default turns it into invalid UTF-8 bytes
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
     parser = argparse.ArgumentParser(
         prog="codediff",
         description="semantic summary of a git diff: API / behavior / "
@@ -745,8 +756,11 @@ def main(argv=None):
     parser.add_argument("--json", action="store_true", dest="as_json",
                         help="structured output for tooling (always full; "
                              "--max-tokens applies to text output)")
-    parser.add_argument("--max-tokens", type=int, metavar="N", default=0,
-                        help="cap output at roughly N tokens (bytes/4)")
+    parser.add_argument("--max-tokens", type=int, metavar="N",
+                        default=DEFAULT_MAX_TOKENS,
+                        help="cap output at roughly N tokens (bytes/4) "
+                             "(default: %d, 0 = unbounded; --json is "
+                             "always full)" % DEFAULT_MAX_TOKENS)
     parser.add_argument("--no-update", action="store_true",
                         help="skip the implicit `repoindex update` before "
                              "the test-coverage flag")

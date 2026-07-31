@@ -554,11 +554,13 @@ def _shared_flags(parser):
 
 def _pin_utf8():
     """Test and target paths are echoed verbatim; a cp1252 console default
-    would replace anything non-ASCII with `?`."""
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    except (AttributeError, ValueError):
-        pass
+    would replace anything non-ASCII with `?`. stderr too: error text
+    carries the same punctuation and is read by the same agent."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
 
 
 def main(argv=None):

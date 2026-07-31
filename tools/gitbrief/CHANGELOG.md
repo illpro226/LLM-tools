@@ -1,5 +1,13 @@
 # gitbrief Changelog
 
+- 2026-07-31: v0.2.0 — `--max-tokens` now defaults to 2000 instead of unbounded
+  (ADR-006, docs/decisions/0005-budgets-on-by-default.md); `--max-tokens 0`
+  restores the old behaviour. `gitbrief hunks` on this repo's working diff
+  drops from ~2,900 to ~310 tokens with no flag passed. 4 new tests
+  (26 total).
+  Also: stderr pinned to UTF-8 at entry alongside stdout — error messages
+  carry the same non-ASCII punctuation as normal output, and on a cp1252
+  console reached the caller as invalid UTF-8 bytes.
 - 2026-07-27: v0.1.1 — stdout pinned to UTF-8 so echoed file content keeps
   its non-ASCII characters on Windows. Closes the gitbrief half of
   docs/known-issues/non-ascii-output-mangled-on-windows.md.

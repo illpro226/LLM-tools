@@ -1,6 +1,6 @@
 # sgrep Status
 
-Implemented (v0.1.1) and passing tests.
+Implemented (v0.2.0) and passing tests.
 
 - `sgrep.py` — single-file CLI covering all PRD modes: condensed ranked
   digest, `--files-only`, `--counts-only`, `--max-tokens` (ADR-003 order:
@@ -14,7 +14,9 @@ Implemented (v0.1.1) and passing tests.
 - Ranking: match count × path-class weight (src 1.0 / tests 0.5 /
   generated 0.2), overridable via `.sgrep.toml` (`[weights]`, extra
   `[classes]` fnmatch patterns); ties break by path.
-- Tests: `tests/test_sgrep.py` (23 tests) — parser/dedupe/rank/budget
+- `--max-tokens` defaults to 1500 rather than unbounded (docs/decisions/0005);
+  `--max-tokens 0` restores unbounded output.
+- Tests: `tests/test_sgrep.py` (28 tests) — parser/dedupe/rank/budget
   against canned `rg --json` streams in `tests/fixtures/rg-output/`;
   5 end-to-end tests run against real ripgrep and skip when absent.
 

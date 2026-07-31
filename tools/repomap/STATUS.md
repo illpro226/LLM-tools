@@ -1,6 +1,6 @@
 # repomap Status
 
-Implemented (v0.2.0) and passing tests.
+Implemented (v0.3.0) and passing tests.
 
 - `repomap.py` — single-file, stdlib-only CLI covering the PRD surface:
   pruned tree (built-in skip list + root `.gitignore` subset), per-file
@@ -20,7 +20,9 @@ Implemented (v0.2.0) and passing tests.
 - Ranking is the built-in identifier-occurrence counter only; preferring
   `.repoindex/index.db` is deferred until repoindex pins its schema
   (ADR-005). The ranker function is the seam where it slots in.
-- Tests: `tests/test_repomap.py` (18 tests) against the multi-language
+- `--max-tokens` defaults to 3000 rather than unbounded (docs/decisions/0005);
+  `--max-tokens 0` restores unbounded output.
+- Tests: `tests/test_repomap.py` (25 tests) against the multi-language
   fixture repo in `tests/fixtures/repo/` (Python, TS, Go, Rust, C, Lua
   fallback, vendored/generated/gitignored dirs).
 

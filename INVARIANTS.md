@@ -11,13 +11,30 @@ decision record in `docs/decisions/`, not just a PR.
   so any finding can be followed up with `xread`.
 - Every tool whose output can grow respects `--max-tokens N`, degrading by
   summarizing harder — never by truncating mid-thought.
-- **stdout is UTF-8, pinned at entry** — `sys.stdout.reconfigure(
-  encoding="utf-8", errors="replace")`, never the platform default. These
-  tools are the recommended substitute for reading files, so their output
-  gets reasoned over and sometimes copied back into an edit; a character
-  mangled by a cp1252 console is a silent write corruption, not just a bad
-  read. Subprocess captures of other tools' output pin `encoding="utf-8"`
-  for the same reason.
+- **The budget is on by default, and every rung is bounded**
+  (docs/decisions/0005). A tool whose purpose is keeping bulk out of a
+  context window must not emit bulk unless asked twice: opt-in caps were
+  passed on 1.4% of real calls. A ladder must also actually *terminate* in
+  something small — a rung that is still O(input), like one line per
+  top-level key, means the budget is ignored rather than merely loose.
+  `--max-tokens 0` is the documented escape hatch. Modes whose output feeds
+  another program (`structo --select`/`--raw`, `--json` payloads) are
+  exempt from the default, never from an explicit cap.
+- **Degradation is announced.** When a budget removes something the caller
+  asked for, the output says so and names `--max-tokens`. Silently serving
+  less than was requested is worse than serving nothing: dropped context
+  reads as *absent* context, and the caller never thinks to raise the cap.
+- **stdout and stderr are UTF-8, pinned at entry** —
+  `reconfigure(encoding="utf-8", errors="replace")` on both, never the
+  platform default. These tools are the recommended substitute for reading
+  files, so their output gets reasoned over and sometimes copied back into
+  an edit; a character mangled by a cp1252 console is a silent write
+  corruption, not just a bad read. stderr counts: error messages carry the
+  same non-ASCII punctuation as normal output and are read by the same
+  agent, and pinning must happen before the first error can be printed —
+  pinning stdout late, after the error path, protects nothing. Subprocess
+  captures of other tools' output pin `encoding="utf-8"` for the same
+  reason.
 
 ## Semantics
 

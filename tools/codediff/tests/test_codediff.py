@@ -304,3 +304,15 @@ def test_offline_no_network(repo, monkeypatch, capsys):
     assert codediff.main([]) == 0
     out = capsys.readouterr().out
     assert "Risk flags" in out
+
+
+# ------------------------------------------- default token cap (ADR-007)
+
+def test_default_max_tokens_is_on():
+    assert codediff.DEFAULT_MAX_TOKENS > 0
+
+
+def test_json_is_not_capped_by_the_default(repo):
+    """A truncated payload is not parseable, so --json stays full."""
+    data = run_json(repo)
+    assert isinstance(data, dict)

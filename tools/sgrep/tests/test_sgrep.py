@@ -321,3 +321,71 @@ def test_non_ascii_content_survives_a_cp1252_console(tmp_path):
     assert code == 0
     assert EM_DASH.encode("utf-8") in out
     assert b"?" not in out
+
+
+# ------------------------------------------------ default budget (ADR-005)
+
+def _wide_tree(tmp_path, nfiles=40, matches=3, filler=12):
+    """Many files, few distinct matches each, distinct surrounding text -
+    so nothing is collapsed by the per-file representative logic and the
+    budget ladder is what decides the size."""
+    for i in range(nfiles):
+        lines = []
+        for m in range(matches):
+            lines += ["pad %d %d %d" % (i, m, k) for k in range(filler)]
+            lines.append("needle unique %d %d" % (i, m))
+        (tmp_path / ("f%02d.py" % i)).write_text(
+            "\n".join(lines), encoding="utf-8")
+
+
+def test_default_max_tokens_is_on():
+    """The ladder must engage without being asked for: an opt-in cap only
+    protects callers who already suspected the output would be large."""
+    assert sgrep.DEFAULT_MAX_TOKENS > 0
+
+
+@needs_rg
+def test_default_budget_caps_a_large_search(tmp_path):
+    _wide_tree(tmp_path)
+    code, out = run_bytes(["--rg", RG, "-C", "5", "needle", "."], tmp_path)
+    assert code == 0
+    text = out.decode("utf-8", "replace")
+    assert sgrep._tokens_of(text.splitlines()) <= sgrep.DEFAULT_MAX_TOKENS
+    # and it names the flag, so the caller knows a bigger cap is available
+    assert "--max-tokens" in text
+
+
+@needs_rg
+def test_max_tokens_zero_restores_unbounded_output(tmp_path):
+    _wide_tree(tmp_path)
+    _, capped = run_bytes(["--rg", RG, "-C", "5", "needle", "."], tmp_path)
+    code, full = run_bytes(
+        ["--rg", RG, "-C", "5", "--max-tokens", "0", "needle", "."], tmp_path)
+    assert code == 0
+    assert len(full) > len(capped)
+
+
+@needs_rg
+def test_small_search_is_untouched_by_the_default(tmp_path):
+    """The default must be invisible for ordinary calls - a cap that
+    reshapes everyday output would just be a different kind of noise."""
+    (tmp_path / "one.py").write_text("a\nneedle here\nb\n", encoding="utf-8")
+    _, deflt = run_bytes(["--rg", RG, "needle", "."], tmp_path)
+    _, unbounded = run_bytes(["--rg", RG, "--max-tokens", "0", "needle", "."],
+                             tmp_path)
+    assert deflt == unbounded
+
+
+def test_reduced_context_is_announced():
+    """Dropped context must not read as absent context."""
+    files = canned("context.jsonl")
+    weights, extra = default_conf()
+    ranked = sgrep.rank(files, weights, extra)
+    full = sgrep.apply_budget(ranked, files, _Args(context=3))
+    tight = sgrep.apply_budget(
+        ranked, files,
+        _Args(context=3, max_tokens=sgrep._tokens_of(full) - 1))
+    assert tight[0].startswith("(context reduced 3 -> ")
+    assert "--max-tokens" in tight[0]
+    # no note when nothing was taken away
+    assert not full[0].startswith("(context reduced")

@@ -495,3 +495,50 @@ def test_select_memory_bounded_on_large_json_array(tmp_path, capsys):
     tracemalloc.stop()
     assert len(out.splitlines()) == 120_001
     assert peak_mb < 25, "peak %.1f MB not O(one record)" % peak_mb
+
+
+# ------------------------------------------- default token cap (ADR-006)
+
+def test_default_max_tokens_is_on():
+    assert structo.DEFAULT_MAX_TOKENS > 0
+
+
+def test_select_is_exempt_from_the_default_budget(tmp_path, capsys):
+    """--select feeds awk/sort and refuses rather than truncates, so a
+    default cap there would turn an ordinary pipe into an error."""
+    src = tmp_path / "rows.jsonl"
+    src.write_text("\n".join(
+        '{"a": %d, "b": "value-%d"}' % (i, i) for i in range(4000)),
+        encoding="utf-8")
+    out = ok([str(src), "--select", "a,b"], capsys)
+    # header row + one row per record, nothing dropped
+    assert len(out.strip().splitlines()) == 4001
+
+
+def test_raw_is_exempt_from_the_default_budget(tmp_path, capsys):
+    src = tmp_path / "one.json"
+    src.write_text('{"blob": "%s"}' % ("x" * 40000), encoding="utf-8")
+    out = ok([str(src), "--path", "blob", "--raw"], capsys)
+    assert len(out.strip()) == 40000
+
+
+def test_explicit_max_tokens_still_refuses_on_select(tmp_path, capsys):
+    """The exemption is only about the *default* - an explicit cap must
+    still behave exactly as it did before."""
+    src = tmp_path / "rows.jsonl"
+    src.write_text("\n".join(
+        '{"a": %d, "b": "value-%d"}' % (i, i) for i in range(4000)),
+        encoding="utf-8")
+    code, _, err = run([str(src), "--select", "a,b", "--max-tokens", "50"],
+                       capsys)
+    assert code != 0
+    assert "budget" in err
+
+
+def test_schema_output_is_capped_by_default(tmp_path, capsys):
+    wide = {"f%d" % i: i for i in range(4000)}
+    src = tmp_path / "wide.json"
+    src.write_text(json.dumps(wide), encoding="utf-8")
+    out = ok([str(src)], capsys)
+    est = len(out.rstrip("\n").encode("utf-8")) // 4 + 1
+    assert est <= structo.DEFAULT_MAX_TOKENS

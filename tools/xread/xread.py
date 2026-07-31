@@ -28,7 +28,7 @@ import os
 import re
 import sys
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 PY_EXTS = {".py", ".pyi"}
 TS_EXTS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"}
@@ -37,6 +37,10 @@ PRISMA_EXTS = {".prisma"}
 
 WINDOW = 20        # query-mode block size for lines outside any symbol
 DEFAULT_TOP = 3    # query-mode blocks returned
+# ADR-005: the token cap is on by default. An excerpt tool that can still
+# emit a whole large symbol unasked is only excerpting by luck; 0 restores
+# unbounded output for the rare case that wants it.
+DEFAULT_MAX_TOKENS = 2000
 ADJACENT_MAX = 20  # query-mode: max lines of a preceding sibling section
                    # pulled in when a match starts at a markdown heading
 
@@ -509,6 +513,16 @@ def apply_budget(regions, sources, max_tokens):
                 blank = j
                 break
         if blank is None or r["start"] + blank - 1 <= r["start"]:
+            # No blank line to cut at. Trimming at a plain line boundary is
+            # worse than a paragraph boundary but far better than the
+            # alternative: dropping the sole region returns nothing but a
+            # note, which is the one degradation that answers no part of
+            # the question. Halve toward the head until it fits.
+            span = r["end"] - r["start"]
+            if span > 1:
+                r.setdefault("trimmed_from", r["end"])
+                r["end"] = r["start"] + span // 2
+                continue
             dropped.append(regions.pop())
             break
         r.setdefault("trimmed_from", r["end"])
@@ -550,6 +564,11 @@ def cmd_headings(files, max_tokens):
 
 
 def main(argv=None):
+    try:  # error text carries the same non-ASCII punctuation as output;
+        # a cp1252 console default turns it into invalid UTF-8 bytes
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
     parser = argparse.ArgumentParser(
         prog="xread",
         description="print targeted excerpts of files instead of whole files")
@@ -568,8 +587,11 @@ def main(argv=None):
                              % DEFAULT_TOP)
     parser.add_argument("--headings", action="store_true",
                         help="markdown: print the heading outline")
-    parser.add_argument("--max-tokens", type=int, metavar="N", default=0,
-                        help="cap output at roughly N tokens")
+    parser.add_argument("--max-tokens", type=int, metavar="N",
+                        default=DEFAULT_MAX_TOKENS,
+                        help="cap output at roughly N tokens "
+                             "(default: %d, 0 = unbounded)"
+                             % DEFAULT_MAX_TOKENS)
     parser.add_argument("--version", action="version",
                         version="xread %s" % __version__)
     args = parser.parse_args(argv)

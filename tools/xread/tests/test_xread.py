@@ -400,3 +400,51 @@ def test_budget_never_cuts_symbol_mid_body_when_it_fits(capsys):
     assert code == 0
     assert "return math.sqrt(a * a + b * b)" in out
     assert "elided" not in out
+
+
+def _pad_file(path, n):
+    path.write_text(
+        "\n".join("x_%d = %d  # padding padding padding padding" % (i, i)
+                  for i in range(n)), encoding="utf-8")
+
+
+# ------------------------------------------- default token cap (ADR-005)
+
+def _est(out):
+    return len(out.rstrip("\n").encode("utf-8")) // 4 + 1
+
+
+def test_default_max_tokens_is_on():
+    """An excerpt tool that can still emit an unbounded region unasked is
+    only excerpting by luck."""
+    assert xread.DEFAULT_MAX_TOKENS > 0
+
+
+def test_default_budget_caps_a_large_excerpt(tmp_path, capsys):
+    big = tmp_path / "big_pad.py"
+    _pad_file(big, 4000)
+    code, out, err = run([str(big), "--lines", "1-4000"], capsys)
+    assert code == 0, err
+    assert _est(out) <= xread.DEFAULT_MAX_TOKENS
+    assert "elided" in out          # and it says what it took away
+
+
+def test_max_tokens_zero_restores_unbounded_output(tmp_path, capsys):
+    big = tmp_path / "big_pad.py"
+    _pad_file(big, 4000)
+    _, capped, _ = run([str(big), "--lines", "1-4000"], capsys)
+    code, unbounded, err = run(
+        [str(big), "--lines", "1-4000", "--max-tokens", "0"], capsys)
+    assert code == 0, err
+    assert len(unbounded) > len(capped)
+
+
+def test_small_excerpt_is_untouched_by_the_default(tmp_path, capsys):
+    """The default must be invisible for ordinary calls - a cap that
+    reshapes everyday output is just a different kind of noise."""
+    small = tmp_path / "small.py"
+    small.write_text("def f():\n    return 1\n", encoding="utf-8")
+    _, deflt, _ = run([str(small), "--symbol", "f"], capsys)
+    _, unbounded, _ = run(
+        [str(small), "--symbol", "f", "--max-tokens", "0"], capsys)
+    assert deflt == unbounded

@@ -280,3 +280,21 @@ def test_end_to_end_fingerprint_detection(capsys):
     assert code == 1
     assert "(pytest) 2 problems" in out
     assert "FAIL test_login_mfa  tests/test_auth.py:24" in out
+
+
+# ------------------------------------------------ stderr encoding (INVARIANTS)
+
+def test_main_pins_stderr_to_utf8(tmp_path, monkeypatch):
+    """runlite has no _pin_utf8 helper - main() pins both streams at entry,
+    before any error can be printed. Error text carries the same non-ASCII
+    punctuation as the reports and is read by the same agent."""
+    import io as _io
+    import sys as _sys
+    saved = _sys.stdout, _sys.stderr
+    try:
+        _sys.stdout = _io.TextIOWrapper(_io.BytesIO(), encoding="cp1252")
+        _sys.stderr = _io.TextIOWrapper(_io.BytesIO(), encoding="cp1252")
+        runlite.main(["--", sys.executable, "-c", "pass"])
+        assert _sys.stderr.encoding.lower().replace("-", "") == "utf8"
+    finally:
+        _sys.stdout, _sys.stderr = saved

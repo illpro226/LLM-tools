@@ -1,5 +1,14 @@
 # xread Changelog
 
+- 2026-07-31: v0.3.0 — `--max-tokens` now defaults to 2000 instead of unbounded
+  (ADR-005, docs/decisions/0005-budgets-on-by-default.md); `--max-tokens 0`
+  restores the old behaviour. Fixed: a sole region with no blank line to
+  trim at was dropped whole, returning only a `(dropped for --max-tokens)`
+  note; it now halves toward its head until it fits. 4 new tests
+  (39 total).
+  Also: stderr pinned to UTF-8 at entry alongside stdout — error messages
+  carry the same non-ASCII punctuation as normal output, and on a cp1252
+  console reached the caller as invalid UTF-8 bytes.
 - 2026-07-27: v0.2.1 — stdout pinned to UTF-8 so excerpted source keeps its
   non-ASCII characters on Windows (same fix as sgrep/repomap/gitbrief).
 - 2026-07-17: v0.2.0 — Prisma schema support for `--symbol`: flat block

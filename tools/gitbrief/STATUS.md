@@ -1,6 +1,6 @@
 # gitbrief Status
 
-Implemented (v0.1.0) and passing tests.
+Implemented (v0.2.0) and passing tests.
 
 - `gitbrief.py` — single-file, stdlib-only CLI over subprocess `git`
   plumbing (`status --porcelain=v2 --branch`, `diff --numstat`,
@@ -19,7 +19,9 @@ Implemented (v0.1.0) and passing tests.
   in a "not analyzed" note.
 - Every mode takes `--max-tokens N` (bytes/4) and degrades by whole
   levels: table→counts, hunk context→headers→counts, list shortening.
-- Tests: `tests/test_gitbrief.py` (20 tests) against temp repos scripted
+- `--max-tokens` defaults to 2000 rather than unbounded (docs/decisions/0005);
+  `--max-tokens 0` restores unbounded output.
+- Tests: `tests/test_gitbrief.py` (26 tests) against temp repos scripted
   by the suite (upstream drift via a local bare remote, staged + unstaged
   + untracked with exact counts, feature branch with known symbol edits);
   host git config is neutralized. A repo-state snapshot asserts every

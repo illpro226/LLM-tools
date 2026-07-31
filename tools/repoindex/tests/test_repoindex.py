@@ -654,3 +654,22 @@ def test_build_is_deterministic(repo):
     conn2.close()
 
     assert snap1 == snap2
+
+
+# ------------------------------------------------ stderr encoding (INVARIANTS)
+
+def test_pin_utf8_covers_stderr():
+    """Error text carries the same non-ASCII punctuation as normal output
+    and is read by the same agent; a cp1252 console would emit invalid
+    UTF-8 bytes. stdout was pinned long before stderr was."""
+    import io as _io
+    import sys as _sys
+    saved = _sys.stdout, _sys.stderr
+    try:
+        _sys.stdout = _io.TextIOWrapper(_io.BytesIO(), encoding="cp1252")
+        _sys.stderr = _io.TextIOWrapper(_io.BytesIO(), encoding="cp1252")
+        cli._pin_utf8()
+        assert _sys.stdout.encoding.lower().replace("-", "") == "utf8"
+        assert _sys.stderr.encoding.lower().replace("-", "") == "utf8"
+    finally:
+        _sys.stdout, _sys.stderr = saved

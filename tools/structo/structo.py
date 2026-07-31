@@ -34,9 +34,11 @@ import os
 import re
 import sys
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 DEFAULT_SAMPLE = 10
+# ADR-006: schema output is capped by default; --select/--raw are not.
+DEFAULT_MAX_TOKENS = 2000
 EXAMPLES_PER_NODE = 2
 EXAMPLE_CAP = 24
 DISTINCT_CAP = 256
@@ -394,9 +396,13 @@ class Shape:
                         node["sampled"] = True
 
 
-def render_schema(shape, level):
+def render_schema(shape, level, key_cap=0):
     # level 0: full; 1: no examples; 2: depth<=2, no percentages;
     # 3: top-level keys only
+    # key_cap (0 = unlimited) additionally limits siblings listed per node.
+    # Depth levels alone bottom out at one line per top-level key, which is
+    # unbounded for a wide record - a 4000-key object ignored every budget
+    # because the ladder had no rung left to climb down to.
     out = []
     max_depth = {0: 99, 1: 99, 2: 2, 3: 1}[level]
 
@@ -421,8 +427,14 @@ def render_schema(shape, level):
         if node["elem"] is not None:
             kids.append(("items", node["elem"]))
         if depth < max_depth:
-            for key, child in kids:
+            shown, hidden = kids, 0
+            if key_cap and len(kids) > key_cap:
+                shown, hidden = kids[:key_cap], len(kids) - key_cap
+            for key, child in shown:
                 emit(key, child, node["objs"], depth + 1)
+            if hidden:
+                out.append("  " * (depth + 1) + "… (+%d more key%s)"
+                           % (hidden, "" if hidden == 1 else "s"))
         elif kids and level < 3:
             out.append("  " * (depth + 1) + "… (%d nested key%s)"
                        % (len(kids), "" if len(kids) == 1 else "s"))
@@ -1052,6 +1064,11 @@ def summarize(path, fmt, sample, target):
                     bad, "" if bad == 1 else "s")
         levels = [lambda lv=lv: render_schema(shape, lv)
                   for lv in (0, 1, 2, 3)]
+        # Rungs below "top-level keys only", for records too wide for the
+        # depth ladder to bound. Ends at 5 keys, which still names the
+        # shape rather than truncating it to nothing.
+        levels += [lambda kc=kc: render_schema(shape, 3, key_cap=kc)
+                   for kc in (100, 40, 15, 5)]
         return extra, levels
     if fmt in ("csv", "tsv"):
         with open(path, encoding="utf-8", errors="replace",
@@ -1082,6 +1099,11 @@ def _relax_stdout(newline=None):
 
 
 def main(argv=None):
+    try:  # error text carries the same non-ASCII punctuation as output;
+        # a cp1252 console default turns it into invalid UTF-8 bytes
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
     parser = argparse.ArgumentParser(
         prog="structo",
         description="print the schema and shape of a data file "
@@ -1101,8 +1123,12 @@ def main(argv=None):
                         default=DEFAULT_SAMPLE,
                         help="array elements aggregated per array "
                              "(default %d)" % DEFAULT_SAMPLE)
-    parser.add_argument("--max-tokens", type=int, metavar="N", default=0,
-                        help="cap output at roughly N tokens (bytes/4)")
+    # None means "not specified", so the default can differ by mode below.
+    parser.add_argument("--max-tokens", type=int, metavar="N", default=None,
+                        help="cap output at roughly N tokens (bytes/4) "
+                             "(default: %d for schema output, unbounded for "
+                             "--select/--raw; 0 = unbounded)"
+                             % DEFAULT_MAX_TOKENS)
     parser.add_argument("--version", action="version",
                         version="structo %s" % __version__)
     args = parser.parse_args(argv)
@@ -1117,6 +1143,14 @@ def main(argv=None):
                 raise StructoError("--path zooms into json/yaml/jsonl "
                                    "(%s detected as %s)" % (args.file, fmt))
             target = parse_path(args.path)
+        if args.max_tokens is None:
+            # ADR-006: the schema digest is capped by default, but --select
+            # and --raw feed other programs and refuse rather than truncate
+            # (see below). Defaulting those to a budget would turn an
+            # ordinary `structo --select ... | awk` into an error, so an
+            # unset cap means unbounded there and only there.
+            args.max_tokens = (0 if (args.select or args.raw)
+                               else DEFAULT_MAX_TOKENS)
         budget = max(0, args.max_tokens)
         if args.select:
             if args.raw:

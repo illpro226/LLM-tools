@@ -265,3 +265,39 @@ def test_outside_repo_errors(tmp_path, monkeypatch, capsys):
     code, out, err = run([], capsys)
     assert code == 2
     assert "git" in err
+
+
+# ------------------------------------------- default token cap (ADR-006)
+
+def test_default_max_tokens_is_on():
+    assert gitbrief.DEFAULT_MAX_TOKENS > 0
+
+
+def test_default_budget_caps_a_large_hunks_view(repo, monkeypatch, capsys):
+    """`hunks` on a big working diff is exactly the call that floods a
+    context window, and never the call anyone thinks to guard."""
+    big = repo / "big_change.py"
+    big.write_text("\n".join("added_%d = %d  # padding padding padding" % (i, i)
+                             for i in range(3000)), encoding="utf-8")
+    g(repo, "add", "big_change.py")
+    out = ok(["hunks"], capsys)
+    assert gitbrief._est(out.splitlines()) <= gitbrief.DEFAULT_MAX_TOKENS
+
+
+def test_max_tokens_zero_restores_unbounded_output(repo, monkeypatch, capsys):
+    big = repo / "big_change.py"
+    big.write_text("\n".join("added_%d = %d  # padding padding padding" % (i, i)
+                             for i in range(3000)), encoding="utf-8")
+    g(repo, "add", "big_change.py")
+    monkeypatch.chdir(repo)
+    capped = ok(["hunks"], capsys)
+    unbounded = ok(["hunks", "--max-tokens", "0"], capsys)
+    assert len(unbounded) > len(capped)
+
+
+def test_small_diff_is_untouched_by_the_default(repo, monkeypatch, capsys):
+    """The default must be invisible for ordinary calls."""
+    monkeypatch.chdir(repo)
+    deflt = ok([], capsys)
+    unbounded = ok(["--max-tokens", "0"], capsys)
+    assert deflt == unbounded

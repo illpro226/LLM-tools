@@ -277,3 +277,47 @@ def test_non_ascii_content_survives_a_cp1252_console(tmp_path):
     assert "\u2014".encode("utf-8") in proc.stdout
     assert "\u2192".encode("utf-8") in proc.stdout
     assert b"?" not in proc.stdout
+
+
+# ------------------------------------------- default token cap (ADR-007)
+
+def _wide_repo(tmp_path, dirs=12, files=8, funcs=12):
+    for d in range(dirs):
+        sub = tmp_path / ("pkg%02d" % d)
+        sub.mkdir()
+        for f in range(files):
+            (sub / ("mod%d.py" % f)).write_text(
+                "\n".join("def func_%d_%d_%d(alpha, beta, gamma):\n"
+                          "    return %d" % (d, f, i, i)
+                          for i in range(funcs)), encoding="utf-8")
+    return str(tmp_path)
+
+
+def test_default_max_tokens_is_on():
+    assert repomap.DEFAULT_MAX_TOKENS > 0
+
+
+def test_default_budget_caps_a_large_map(tmp_path, capsys):
+    """Orientation is read at the start of a task, when context is most
+    valuable - the worst moment to emit an unbounded map."""
+    where = _wide_repo(tmp_path)
+    code, out, err = run([where], capsys)
+    assert code == 0, err
+    assert est(out) <= repomap.DEFAULT_MAX_TOKENS
+    assert "--max-tokens" in out    # and it says what it took away
+
+
+def test_max_tokens_zero_restores_unbounded_output(tmp_path, capsys):
+    where = _wide_repo(tmp_path)
+    _, capped, _ = run([where], capsys)
+    code, unbounded, err = run([where, "--max-tokens", "0"], capsys)
+    assert code == 0, err
+    assert len(unbounded) > len(capped)
+
+
+def test_small_repo_is_untouched_by_the_default(tmp_path, capsys):
+    (tmp_path / "only.py").write_text("def f():\n    return 1\n",
+                                      encoding="utf-8")
+    _, deflt, _ = run([str(tmp_path)], capsys)
+    _, unbounded, _ = run([str(tmp_path), "--max-tokens", "0"], capsys)
+    assert deflt == unbounded

@@ -45,3 +45,23 @@ while JS/TS spans are heuristic (Allman braces and multi-line arrow params
 unsupported — acceptable, fixtures pin behavior). If tree-sitter is ever
 justified, it slots in as an alternate `parser_for` backend without changing
 the region model.
+
+## ADR-005: `--max-tokens` defaults to 2000 — Accepted (2026-07-31)
+
+An excerpt tool that can still emit an unbounded region unasked is only
+excerpting by luck. The default is 2000 tokens against a measured 95th
+percentile of ~1755; `--max-tokens 0` restores unbounded output.
+
+Fixed alongside: when the sole surviving region had no blank line to trim
+at, `apply_budget` dropped it entirely and returned only a
+`(dropped for --max-tokens: …)` note. That is the one degradation that
+answers no part of the question. It now halves the region toward its head
+until it fits — a plain line boundary is worse than a paragraph boundary
+and far better than nothing.
+
+Suite-wide rationale and the measured evidence are in
+`docs/decisions/0005-budgets-on-by-default.md`: across 661 logged calls in
+the first 18 days of use, 1.4%% passed `--max-tokens`, while 3%% of calls
+produced 8%% of all output. An opt-in cap protects only the caller who
+already suspected the output would be large — the one who did not need
+protecting.

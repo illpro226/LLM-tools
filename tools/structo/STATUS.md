@@ -1,6 +1,6 @@
 # structo Status
 
-Implemented (v0.3.0) and passing tests.
+Implemented (v0.4.0) and passing tests.
 
 - `structo.py` — single-file CLI printing the schema and shape of a data
   file instead of its content. Formats: JSON, JSONL, YAML (via PyYAML —
@@ -46,7 +46,14 @@ Implemented (v0.3.0) and passing tests.
 - `--max-tokens N` (bytes/4) degrades by whole levels: drop
   examples/sample rows → collapse deep nesting and distribution detail →
   top-level structure only (never dropped).
-- Tests: `tests/test_structo.py` (50 tests) over one committed fixture
+- `--max-tokens` defaults to 2000 for schema output rather than unbounded
+  (ADR-006, docs/decisions/0005). `--select` and `--raw` are exempt from
+  the *default* but not from an explicit cap, so piping to `awk`/`sort`
+  keeps working; `--max-tokens 0` restores unbounded output everywhere.
+- The ladder ends in sibling-key caps (100/40/15/5 with `… (+N more
+  keys)`), so a very wide record still fits a budget — depth levels alone
+  bottomed out at one line per top-level key (ADR-006).
+- Tests: `tests/test_structo.py` (55 tests) over one committed fixture
   per format plus the generated large files (slow-marked).
 
 Not done / later: XML has no `--path` zoom and no `--select`; no

@@ -448,6 +448,11 @@ def _split_argv(argv):
 
 
 def main(argv=None):
+    try:  # error text carries the same non-ASCII punctuation as output;
+        # a cp1252 console default turns it into invalid UTF-8 bytes
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
     argv = sys.argv[1:] if argv is None else list(argv)
     opts, cmd = _split_argv(argv)
 

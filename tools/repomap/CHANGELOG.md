@@ -1,5 +1,12 @@
 # repomap Changelog
 
+- 2026-07-31: v0.3.0 — `--max-tokens` now defaults to 3000 instead of unbounded
+  (ADR-007, docs/decisions/0005-budgets-on-by-default.md); `--max-tokens 0`
+  restores the old behaviour. `repomap .` on this repo drops from ~15,000
+  to ~2,900 tokens with no flag passed. 4 new tests (25 total).
+  Also: stderr pinned to UTF-8 at entry alongside stdout — error messages
+  carry the same non-ASCII punctuation as normal output, and on a cp1252
+  console reached the caller as invalid UTF-8 bytes.
 - 2026-07-27: v0.2.0 — `--focus PATH` now narrows instead of merely
   ranking: unfocused files collapse to `path [refs N] (K symbols)` with a
   note. Runs of 3+ `test_*` functions collapse to one counted line, so a

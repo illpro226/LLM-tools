@@ -94,3 +94,27 @@ output. Like `--raw`, `--select` with `--max-tokens` refuses (exit 2)
 rather than truncating: a projection that dropped records would corrupt the
 downstream sum, and it measures in a first pass before printing so nothing
 partial reaches stdout.
+
+## ADR-006: `--max-tokens` defaults to 2000 for schema output; `--select`/`--raw` are exempt — Accepted (2026-07-31)
+
+Schema output is capped by default at 2000 tokens. `--select` and `--raw`
+are exempt from the *default* — never from an explicit `--max-tokens` —
+because they feed `awk`/`sort` and refuse rather than truncate when over
+budget (ADR-004, ADR-005). Defaulting them to a cap would turn an ordinary
+`structo --select … | awk` into an error, which is a worse failure than the
+one the cap prevents.
+
+Fixed alongside: the ladder's deepest rung was "top-level keys only", which
+is still one line per key and therefore unbounded for a wide record. A
+4000-key object emitted ~12,800 tokens against `--max-tokens 200` — the
+budget was not merely loose, it was ignored, in violation of INVARIANTS.
+`render_schema` now takes a `key_cap`, and the ladder continues through
+caps of 100, 40, 15 and 5 siblings with a `… (+N more keys)` note. The same
+object now renders in ~150 tokens at that budget.
+
+Suite-wide rationale and the measured evidence are in
+`docs/decisions/0005-budgets-on-by-default.md`: across 661 logged calls in
+the first 18 days of use, 1.4%% passed `--max-tokens`, while 3%% of calls
+produced 8%% of all output. An opt-in cap protects only the caller who
+already suspected the output would be large — the one who did not need
+protecting.

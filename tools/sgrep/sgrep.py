@@ -24,11 +24,17 @@ import re
 import subprocess
 import sys
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 SHOW_ALL_LIMIT = 5    # files with <= this many matching lines show them all
 REPRESENTATIVES = 3   # distinct lines shown when a file exceeds the limit
 MAX_STORED = 200      # matches kept per file; the count keeps rising past it
+# ADR-005: the budget ladder is on by default. An opt-in cap protects only
+# the callers who already suspected the output would be large, which is
+# exactly the case where they didn't need protecting; the calls that blow
+# up a context window are the ones nobody expected to. `--max-tokens 0`
+# restores unbounded output.
+DEFAULT_MAX_TOKENS = 1500
 
 GENERATED_PARTS = {
     "node_modules", "dist", "build", "vendor", "__pycache__", "coverage",
@@ -242,11 +248,23 @@ def apply_budget(ranked, files, args):
     cap = None
     nfiles = len(ranked)
     counts_only = args.counts_only
+    def note(lines):
+        """Say so when the budget silently removed something the caller
+        asked for. Without this, dropped context reads as absent context:
+        the caller concludes the surrounding lines don't exist rather than
+        that they were trimmed, and never thinks to raise the cap."""
+        if ctx < args.context:
+            return ["(context reduced %d -> %d for --max-tokens %d)"
+                    % (args.context, ctx, args.max_tokens)] + lines
+        return lines
+
     while True:
         lines = render(ranked, files, ctx, cap, nfiles, counts_only,
                        args.files_only)
-        if not args.max_tokens or _tokens_of(lines) <= args.max_tokens:
+        if not args.max_tokens:
             return lines
+        if _tokens_of(note(lines)) <= args.max_tokens:
+            return note(lines)
         if ctx > 0:
             ctx -= 1
         elif cap is None:
@@ -284,6 +302,11 @@ def apply_budget(ranked, files, args):
 # --------------------------------------------------------------------- CLI
 
 def main(argv=None):
+    try:  # error text carries the same non-ASCII punctuation as output;
+        # a cp1252 console default turns it into invalid UTF-8 bytes
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
     parser = argparse.ArgumentParser(
         prog="sgrep",
         description="ripgrep wrapper that condenses results into a ranked, "
@@ -303,9 +326,11 @@ def main(argv=None):
                         help="ranked matching-file list only")
     parser.add_argument("--counts-only", action="store_true",
                         help="ranked file list with match counts")
-    parser.add_argument("--max-tokens", type=int, metavar="N", default=0,
+    parser.add_argument("--max-tokens", type=int, metavar="N",
+                        default=DEFAULT_MAX_TOKENS,
                         help="cap output; reduces context, then matches per "
-                             "file, then files")
+                             "file, then files (default: %d, 0 = unbounded)"
+                             % DEFAULT_MAX_TOKENS)
     parser.add_argument("--config", metavar="PATH",
                         help="path-class config (default: ./.sgrep.toml)")
     parser.add_argument("--rg", default=os.environ.get("SGREP_RG", "rg"),

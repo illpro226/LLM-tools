@@ -34,3 +34,22 @@ Context: rg has hundreds of flags; mirroring them couples us to its interface.
 Decision: expose pattern, paths, and a safe pass-through subset only; power
 users fall back to raw `rg`.
 Consequences: simpler tool and tests; some rg workflows are out of scope.
+
+## ADR-005: `--max-tokens` defaults to 1500 — Accepted (2026-07-31)
+
+`sgrep` is the most-called tool in the suite and the cheapest per call, so
+its cap is the tightest: 1500 tokens, against a measured 95th percentile of
+~990. `--max-tokens 0` restores unbounded output.
+
+Because the ladder drops context first (ADR-003), the reduction is now
+announced: `(context reduced 3 -> 1 for --max-tokens 1500)`. Silently
+serving fewer context lines than `-C` asked for would read as *absent*
+context — the caller would conclude the surrounding lines don't exist,
+rather than that they were trimmed, and would never think to raise the cap.
+
+Suite-wide rationale and the measured evidence are in
+`docs/decisions/0005-budgets-on-by-default.md`: across 661 logged calls in
+the first 18 days of use, 1.4%% passed `--max-tokens`, while 3%% of calls
+produced 8%% of all output. An opt-in cap protects only the caller who
+already suspected the output would be large — the one who did not need
+protecting.

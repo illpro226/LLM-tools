@@ -29,7 +29,12 @@ import os
 import re
 import sys
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
+
+# ADR-007: the token cap is on by default. An orientation map is read at
+# the start of a task, when context is most valuable; 3000 covers a
+# typical repo's tree plus outlines, and 0 restores unbounded output.
+DEFAULT_MAX_TOKENS = 3000
 
 PY_EXTS = {".py", ".pyi"}
 TS_EXTS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"}
@@ -670,6 +675,11 @@ def build_output(ctx):
 # --------------------------------------------------------------------- CLI
 
 def main(argv=None):
+    try:  # error text carries the same non-ASCII punctuation as output;
+        # a cp1252 console default turns it into invalid UTF-8 bytes
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
     parser = argparse.ArgumentParser(
         prog="repomap",
         description="print a compact repository map: pruned tree plus "
@@ -678,8 +688,11 @@ def main(argv=None):
     parser.add_argument("--focus", metavar="PATH",
                         help="outline only this file or subtree; every other "
                              "file collapses to a one-line count")
-    parser.add_argument("--max-tokens", type=int, metavar="N", default=0,
-                        help="cap output at roughly N tokens (bytes/4)")
+    parser.add_argument("--max-tokens", type=int, metavar="N",
+                        default=DEFAULT_MAX_TOKENS,
+                        help="cap output at roughly N tokens (bytes/4) "
+                             "(default: %d, 0 = unbounded)"
+                             % DEFAULT_MAX_TOKENS)
     parser.add_argument("--version", action="version",
                         version="repomap %s" % __version__)
     args = parser.parse_args(argv)

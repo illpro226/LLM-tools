@@ -221,10 +221,11 @@ def _print_table(cols, rows):
 def _pin_utf8():
     """Paths and `sql` result rows are echoed verbatim; a cp1252 console
     default would replace anything non-ASCII with `?`."""
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    except (AttributeError, ValueError):
-        pass
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
 
 
 def main(argv=None):

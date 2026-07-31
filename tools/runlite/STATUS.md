@@ -13,7 +13,7 @@ Implemented (v0.1.2) and passing tests.
   internal) and 127 (command not found).
 - Windows: argv[0] resolves through `shutil.which` (PATHEXT-aware) so
   `.cmd`/`.bat` shims (`npx`, `tsc`) spawn instead of exiting 127.
-- Tests: `tests/test_runlite.py` (29 tests) against canned logs in
+- Tests: `tests/test_runlite.py` (30 tests) against canned logs in
   `tests/fixtures/logs/`; no real toolchains required.
 
 Not done / later: no packaging or PATH install story yet (run `./runlite.py`

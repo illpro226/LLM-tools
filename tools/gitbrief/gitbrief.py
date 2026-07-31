@@ -27,7 +27,12 @@ import re
 import subprocess
 import sys
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
+
+# ADR-006: the token cap is on by default. `hunks` on a large working diff
+# is exactly the call that floods a context window, and it is never the
+# call anyone thinks to guard. 0 restores unbounded output.
+DEFAULT_MAX_TOKENS = 2000
 
 DEFAULT_COMMITS = 5
 LOG_DEFAULT_N = 10
@@ -536,9 +541,17 @@ def view_pr(base, budget):
 # --------------------------------------------------------------------- CLI
 
 def main(argv=None):
+    try:  # error text carries the same non-ASCII punctuation as output;
+        # a cp1252 console default turns it into invalid UTF-8 bytes
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--max-tokens", type=int, metavar="N", default=0,
-                        help="cap output at roughly N tokens (bytes/4)")
+    common.add_argument("--max-tokens", type=int, metavar="N",
+                        default=DEFAULT_MAX_TOKENS,
+                        help="cap output at roughly N tokens (bytes/4) "
+                             "(default: %d, 0 = unbounded)"
+                             % DEFAULT_MAX_TOKENS)
     parser = argparse.ArgumentParser(
         prog="gitbrief", parents=[common],
         description="layered, token-cheap views of git state "

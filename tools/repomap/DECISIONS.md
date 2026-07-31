@@ -86,3 +86,21 @@ callers/callees of the focused file are named (with ref counts) but not
 expanded, which the known issue accepted as sufficient. Dropping `--focus`
 restores the full map, so nothing is unreachable. No `--only` or `--rank-by`
 flag was added — one flag with the expected meaning beats two.
+
+## ADR-007: `--max-tokens` defaults to 3000 — Accepted (2026-07-31)
+
+Orientation is read at the *start* of a task, when the context window is
+most valuable — the worst moment to spend 15,000 tokens unasked, which is
+what `repomap .` cost on this repo before the default. It now costs ~2,900.
+
+3000 is higher than the suite norm because a whole-repo map legitimately
+needs more room than an excerpt: the measured 95th percentile is ~3185, and
+a tighter cap would reshape ordinary calls rather than just clipping the
+tail. `--max-tokens 0` restores unbounded output.
+
+Suite-wide rationale and the measured evidence are in
+`docs/decisions/0005-budgets-on-by-default.md`: across 661 logged calls in
+the first 18 days of use, 1.4%% passed `--max-tokens`, while 3%% of calls
+produced 8%% of all output. An opt-in cap protects only the caller who
+already suspected the output would be large — the one who did not need
+protecting.
