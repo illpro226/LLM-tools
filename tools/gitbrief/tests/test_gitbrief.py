@@ -276,6 +276,7 @@ def test_default_max_tokens_is_on():
 def test_default_budget_caps_a_large_hunks_view(repo, monkeypatch, capsys):
     """`hunks` on a big working diff is exactly the call that floods a
     context window, and never the call anyone thinks to guard."""
+    monkeypatch.chdir(repo)
     big = repo / "big_change.py"
     big.write_text("\n".join("added_%d = %d  # padding padding padding" % (i, i)
                              for i in range(3000)), encoding="utf-8")
