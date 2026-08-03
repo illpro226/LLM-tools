@@ -1,8 +1,20 @@
 # gitbrief hook: denies `git log --oneline -N` for tiny N
 
+**FIXED 2026-08-02 (guard hook `~/.claude/hooks/llm-tools-guard.py`)**
+
+Both halves are addressed. The `git log` carve-out now allows any invocation
+bounded small by construction — `-1`/`-n 1` as before, plus `--oneline` with
+an explicit count of 10 or fewer; bare `git log --oneline` and counted-but-
+unformatted `git log -5` stay denied, since neither is bounded cheap. Count
+flags are now read from the `git log` sub-command's own arguments rather than
+from anywhere in the command string, so a later `head -1` no longer whitelists
+an unbounded log. Separately, every shell deny on a compound command now says
+outright that nothing in the call ran and that any chained commit/push/build
+did not happen, ending the silent-no-op failure mode below.
+
 **Date:** 2026-07-30
 **Tool:** gitbrief PreToolUse hook
-**Status:** Open
+**Status:** Fixed
 
 ## What I tried
 

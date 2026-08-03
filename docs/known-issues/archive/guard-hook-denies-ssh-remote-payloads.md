@@ -1,8 +1,16 @@
 # Guard hook: denies ssh'd remote payloads on local pattern match
 
+**WONTFIX 2026-08-02 (guard hook `~/.claude/hooks/llm-tools-guard.py`)**
+
+Not fixable from the command string: whether a remote payload costs this
+session context depends on what the remote pipeline does with the output,
+which the hook cannot see. Archived because there is no pending task here,
+not because the friction went away — the workaround (ship the payload as a
+file, run `ssh host 'sh /tmp/x.sh'`) remains the answer.
+
 **Date:** 2026-07-26
 **Tool:** guard hook (`~/.claude/hooks/llm-tools-guard.py`)
-**Status:** Open
+**Status:** Wontfix
 
 ## What I tried
 
@@ -31,6 +39,18 @@ positive on the token-economy rationale the rule exists to enforce.
 Write the remote script to the scratchpad, `scp` it over, run
 `ssh host 'sh /tmp/script.sh'`. Base64-piping the payload also works.
 Both add a round trip per iteration while debugging a remote hook.
+
+## 2026-08-02: re-evaluated, still declining a fix
+
+Looked at this again while fixing the `git log` carve-out. The conclusion
+below holds, and the reason is sharper than "risky bypass": whether a remote
+payload costs context depends on what the *remote pipeline does with the
+output*, which the hook cannot see. `ssh host 'cat big'` returns the file to
+this session and is correctly denied; `ssh host '... | python3 hook.py'`
+returns a one-line verdict and is not. Nothing in the command string
+distinguishes them, so any exemption would be keyed on a proxy (quoting
+shape, `sh /tmp/x.sh`) that either under- or over-matches. Staying open as
+recorded friction, not as a pending task.
 
 Not obviously worth "fixing": naively exempting anything after `ssh ... '`
 would open a bypass wide enough to drive the original problem through

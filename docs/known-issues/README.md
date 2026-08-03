@@ -30,3 +30,8 @@ for anyone tracing why a decision or fix happened, without polluting the
 open list. A `MITIGATED` issue (a real fix shipped but the underlying risk
 isn't fully closed out) stays in the open list, not the archive, until it's
 confirmed resolved.
+
+A `WONTFIX` issue archives the same way. The open list means "there is a task
+here", so friction we've decided not to act on belongs in `archive/` with the
+reasoning recorded — the workaround is still worth finding when someone hits
+it again.
