@@ -48,4 +48,4 @@ when a path exceeds the budget so scripts and hooks can gate on it.
 python -m pytest        # from tools/tokq/
 ```
 
-See [`START.md`](/opt/des_stack/LLM-tools/START.md) for suite-wide conventions.
+See [`START.md`](../../START.md) for suite-wide conventions.

@@ -1,6 +1,6 @@
 # Repository Documentation
 
-LLM-tools is a specification-first repository for small CLI utilities that help coding agents spend fewer tokens. The canonical source for the tool suite is [`START.md`](/opt/des_stack/LLM-tools/START.md).
+LLM-tools is a toolkit of small CLI utilities that help coding agents spend fewer tokens. All eleven tools are implemented and tested; [`START.md`](../START.md) is the original per-tool spec and bootstrap-prompt reference.
 
 ## Current Layout
 
@@ -23,6 +23,6 @@ LLM-tools is a specification-first repository for small CLI utilities that help 
 
 ## Where To Start
 
-1. Read [`START.md`](/opt/des_stack/LLM-tools/START.md) for the tool list and shared conventions.
-2. Read [`AGENTS.md`](/opt/des_stack/LLM-tools/AGENTS.md) for contributor guidance.
+1. Read [`START.md`](../START.md) for the tool list and shared conventions.
+2. Read [`AGENTS.md`](../AGENTS.md) for contributor guidance.
 3. Create new work under `tools/<name>/` and document tool-specific behavior alongside the code.

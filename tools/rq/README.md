@@ -3,8 +3,9 @@
 `rq` ("repo query") answers relationship questions about a codebase from the
 shared `.repoindex/index.db` — it never parses source itself. Every claim
 line carries a `path:line` reference; confidence is two-valued
-(`resolved` | `heuristic`). See [`START.md`](/opt/des_stack/LLM-tools/START.md)
-and [`PRD.md`](PRD.md).
+(`resolved` | `heuristic`). See [`START.md`](../../START.md)
+and [`PRD.md`](PRD.md). Retired from default use — see
+[docs/decisions/0006](../../docs/decisions/0006-retire-rq-testmap.md).
 
 ```
 rq whouses SYMBOL          # inbound refs, grouped per matched symbol

@@ -3,8 +3,9 @@
 `testmap` maps changed files to the tests that likely cover them, so an
 agent runs 12 tests instead of 1,200. It pairs with `runlite`: scope first,
 distill second. Lookups read the shared `.repoindex/index.db` — testmap
-never parses source. See [`START.md`](/opt/des_stack/LLM-tools/START.md)
-and [`PRD.md`](PRD.md).
+never parses source. See [`START.md`](../../START.md)
+and [`PRD.md`](PRD.md). Retired from default use — see
+[docs/decisions/0006](../../docs/decisions/0006-retire-rq-testmap.md).
 
 ```
 testmap [FILES...]         # map changed files (default: git diff --name-only

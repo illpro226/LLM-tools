@@ -22,7 +22,7 @@ The suite is complete at 11 tools — `tokq`, `runlite`, `xread`, `sgrep` (Wave 
   index pages; per-tool PRDs live at `tools/<name>/PRD.md`.
 - `doc/` is a compatibility alias for `docs/` — put new documentation in `docs/`, not `doc/`.
 
-Note: doc cross-links throughout the repo point at `/opt/des_stack/LLM-tools/...` (an earlier container checkout path), not the current location on disk. Treat them as repo-relative.
+Note: doc cross-links were fixed to be repo-relative on 2026-08-07 (they previously pointed at `/opt/des_stack/LLM-tools/...`, an earlier container checkout path). New links should stay repo-relative.
 
 ## Dogfood the suite while working here
 

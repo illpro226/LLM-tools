@@ -1,47 +1,96 @@
 # LLM-tools
 
-LLM-tools is a toolkit of small, composable CLI utilities designed to reduce token waste during coding tasks. The repository is currently a specification and scaffold workspace: the main source of truth is [`START.md`](/opt/des_stack/LLM-tools/START.md), which describes each planned tool and the shared conventions.
+Small, composable CLI tools that keep raw, bulky content out of an LLM
+coding agent's context — a compressed, targeted view instead of a whole
+file, a full `git diff`, or a wall of test output. Eleven tools, all
+implemented and tested, all standalone (stdlib-only Python).
 
-## What Belongs Here
+## Requirements
 
-- `tools/<name>/`: one standalone CLI tool per directory
-- `.repoindex/`: shared SQLite index for relationship-aware tooling
-- `tests/` or tool-local `tests/`: fixture-based tests
-- Generated caches, build outputs, and indexes should stay untracked
+- Python 3.9+ on PATH (as `python` or `python3`)
+- Git (for `gitbrief`, `codediff`, `repoindex`)
+- [ripgrep](https://github.com/BurntSushi/ripgrep) on PATH — only needed for `sgrep`
+- Optional: [`tiktoken`](https://github.com/openai/tiktoken) for exact token counts in `tokq` (falls back to a bytes-based estimate without it, and says so)
 
-Suite-wide rules that every tool must hold are in [`INVARIANTS.md`](/opt/des_stack/LLM-tools/INVARIANTS.md); cross-tool scope and architecture decisions are recorded in [`docs/decisions/`](/opt/des_stack/LLM-tools/docs/decisions/).
+No other dependencies. Nothing to build or install via pip/npm.
 
-## Shared Conventions
+## Install
 
-- Prefer Python or Go for new tools
-- Keep output plain text, deterministic, and stable in ordering
-- Support `--max-tokens N` or `--max-bytes` where applicable
-- Use concise, lowercase tool names such as `xread`, `tokq`, and `gitbrief`
-- Keep dependencies minimal and startup fast
+```sh
+git clone https://github.com/illpro226/LLM-tools.git
+```
 
-## Working Locally
+Add the repo's `bin/` directory to your `PATH`:
 
-There is no single project-wide build script yet. Add commands per tool and document them close to the implementation. Typical examples:
+- **Windows (PowerShell):**
+  ```powershell
+  $env:PATH += ";C:\path\to\LLM-tools\bin"   # current session
+  # persist: System Properties -> Environment Variables -> add to PATH
+  ```
+- **Git Bash / WSL / macOS / Linux:**
+  ```sh
+  echo 'export PATH="$PATH:/path/to/LLM-tools/bin"' >> ~/.bashrc   # or ~/.zshrc
+  ```
 
-- `python -m pytest`
-- `go test ./...`
-- `python -m tools.<name>`
-- `./tools/<name>/<cli>`
+`bin/` ships two shims per tool: a `.cmd` for cmd.exe/PowerShell and an
+extensionless POSIX shell script for Git Bash/WSL — both just invoke
+`python tools/<name>/<name>.py`. If a shell doesn't pick up the shim
+(e.g. Windows `cmd.exe` needs the `.cmd` extension, which it resolves
+automatically once `bin/` is on `PATH`), call the tool directly:
 
-## Contributor Notes
+```sh
+python /path/to/LLM-tools/tools/xread/xread.py FILE --symbol NAME
+```
 
-If you are adding or changing a tool, keep the interface citable and agent-friendly:
+Verify the install:
 
-- Prefer compact, structured text output over verbose logs
-- Preserve stable ordering for repeated runs
-- Add tests for token limits, fallback behavior, and edge cases
-- Do not commit machine-specific paths or generated indexes
+```sh
+tokq --help
+```
 
-See [`AGENTS.md`](/opt/des_stack/LLM-tools/AGENTS.md) for contributor guidance and review expectations.
+## The tools
 
-## Tool Docs
+| Tool | What it's for | Example |
+|---|---|---|
+| `xread` | Read one function/section of a file, not the whole thing | `xread app.py --symbol Login.validate` |
+| `repomap` | Orient in an unfamiliar repo: tree + ranked symbol outline | `repomap . --focus src/auth` |
+| `sgrep` | Ranked, deduped search results instead of a raw `rg` dump | `sgrep "retry" src --counts-only` |
+| `runlite` | Run a build/test command, get a failure-focused report | `runlite -- python -m pytest -q` |
+| `structo` | Schema/shape of a JSON/YAML/JSONL/XML/CSV file, not its contents | `structo data.json --path items[0]` |
+| `gitbrief` | Layered git views (status, hunks, log, PR summary) | `gitbrief`, `gitbrief pr main` |
+| `codediff` | What a change *means* — API/behavior/removed/mechanical + risk flags | `codediff --staged` |
+| `tokq` | Token cost meter — flags context-wasteful files before you read them | `tokq dir .`, `tokq lint docs/` |
+| `repoindex` | Shared symbol/relationship index (`.repoindex/index.db`) that `codediff` builds on | `repoindex build` |
+| `rq` *(retired from default use, still works)* | Query the index: who-calls, impact, dead code, untested | `rq whouses FuncName` |
+| `testmap` *(retired from default use, still works)* | Map changed files to the tests that cover them | `testmap` |
 
-Each `tools/<name>/` directory now contains a standard documentation set:
-`README.md`, `PRD.md`, `ARCHITECTURE.md`, `CONVENTIONS.md`, `STATUS.md`,
-`ROADMAP.md`, `CHANGELOG.md`, `DECISIONS.md`, `TESTING.md`, and
-`CONTRIBUTING.md`.
+Every tool prints plain, deterministic text with `path:line` references
+you can follow up on, and accepts `--max-tokens N` to cap output size
+(`0` = unbounded). Run `<tool> --help` for full usage.
+
+## Using this with a coding agent
+
+[`AGENTS.md`](AGENTS.md) has a copy-pasteable section ("Use these tools
+instead of built-ins") for dropping into any project's `AGENTS.md` or
+your agent's global instructions, so it reaches for these tools instead
+of raw `cat`/`grep`/`git diff`.
+
+## Repo layout
+
+- `tools/<name>/` — one directory per tool, each with its own `README.md`,
+  `STATUS.md`, `CHANGELOG.md`, tests, and design docs
+- `bin/` — PATH shims
+- `docs/` — cross-tool documentation: [`docs/decisions/`](docs/decisions/)
+  (binding architecture/scope decisions), [`docs/PRDs/`](docs/PRDs/),
+  [`docs/known-issues/`](docs/known-issues/)
+- [`INVARIANTS.md`](INVARIANTS.md) — rules every tool must hold
+- [`START.md`](START.md) — original per-tool spec and bootstrap prompts
+
+## Contributing
+
+See [`AGENTS.md`](AGENTS.md) for conventions, working-in-a-tool-directory
+commands, and review expectations.
+
+## License
+
+[MIT](LICENSE)
