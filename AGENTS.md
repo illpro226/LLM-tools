@@ -2,8 +2,9 @@
 
 LLM-tools is a suite of small CLI utilities that let a coding agent spend
 fewer tokens per task: never put raw, bulky content into context when a
-compressed, targeted view will do. All eleven tools are implemented and
-tested. `START.md` describes each tool; `INVARIANTS.md` holds the rules
+compressed, targeted view will do. Nine tools are live; `rq` and `testmap`
+were built, then archived for never being reached for (docs/decisions/0009)
+and now live in `archive/`. `START.md` describes each tool; `INVARIANTS.md` holds the rules
 every tool must keep; each tool lives in `tools/<name>/` with its own
 docs (`STATUS.md`, `CHANGELOG.md`, `DECISIONS.md`) and `tests/`.
 
@@ -32,10 +33,11 @@ path or run `python tools/<name>/<name>.py` from this repo.
 Shared behavior you can rely on: output is plain, deterministic text
 meant to be read by an LLM; every claim line carries a `path:line` you
 can follow up with `xread`; every tool accepts `--max-tokens N` and
-degrades by summarizing harder, never truncating mid-thought. `codediff`
-queries the shared `.repoindex/index.db` and runs `repoindex update`
-automatically first (`repoindex build` once in a new repo).
-Confidence in index-backed answers is two-valued —
+degrades by summarizing harder, never truncating mid-thought (budgets are
+on by default; `--max-tokens 0` is the escape hatch). `codediff` reads the
+shared `.repoindex/index.db` for test-coverage flags when one exists, and
+runs without it, saying what is missing — build it with `repoindex build`
+if you want those flags. Confidence in index-backed answers is two-valued —
 `resolved` or `heuristic` — treat heuristic edges as leads, not facts.
 Caveats: `sgrep` errors clearly if `rg` is absent; `tokq` falls back to
 a bytes-based estimate without `tiktoken` and says so.
@@ -52,9 +54,10 @@ a bytes-based estimate without `tiktoken` and says so.
 - A change to a tool's behavior updates its `CHANGELOG.md` and
   `STATUS.md` (version, test count) in the same commit; cross-tool rules
   live in `INVARIANTS.md`, and breaking one needs a decision record in
-  `docs/decisions/`, not just a PR. Stated test counts also appear in the
-  root `CLAUDE.md` — keep them in sync.
-- Run `tokq lint` on any doc you edit before finishing.
+  `docs/decisions/`, not just a PR. `STATUS.md` is the only place a test
+  count is stated, so there is nothing to keep in sync.
+- `tokq lint`/`tokq dir` when deciding what to cut from a document or
+  hunting where token weight lives — not a finishing ritual on every edit.
 
 ## Style, tests, commits
 

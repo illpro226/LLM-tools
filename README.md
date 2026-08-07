@@ -76,7 +76,7 @@ logging at your checkout via `LLM_TOOLS_SAVINGS_ROOT`.
 | `xread` | Read one function/section of a file, not the whole thing | `xread app.py --symbol Login.validate` |
 | `repomap` | Orient in an unfamiliar repo: tree + ranked symbol outline | `repomap . --focus src/auth` |
 | `sgrep` | Ranked, deduped search results instead of a raw `rg` dump | `sgrep "retry" src --counts-only` |
-| `runlite` | Run a build/test command, get a failure-focused report | `runlite -- python -m pytest -q` |
+| `runlite` | Run a build/test command, get a failure-focused report; `trace` does the same for a stack trace you didn't produce | `runlite -- python -m pytest -q`, `runlite trace app.log` |
 | `structo` | Schema/shape of a JSON/YAML/JSONL/XML/CSV file, not its contents | `structo data.json --path items[0]` |
 | `gitbrief` | Layered git views (status, hunks, log, PR summary) | `gitbrief`, `gitbrief pr main` |
 | `codediff` | What a change *means* — API/behavior/removed/mechanical + risk flags | `codediff --staged` |
