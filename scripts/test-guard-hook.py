@@ -41,12 +41,20 @@ class Denied(Exception):
 
 
 def verdict(mod, command, tool):
-    """ALLOW or DENY, without letting the hook call sys.exit."""
+    """ALLOW or DENY, without letting the hook call sys.exit.
+
+    Older deployed copies take `check_shell(command)` with no tool
+    argument; accept both so this can audit a server's copy as well as the
+    working one.
+    """
     def fake_deny(reason):
         raise Denied(reason)
     real, mod.deny = mod.deny, fake_deny
     try:
-        mod.check_shell(tool, command)
+        try:
+            mod.check_shell(tool, command)
+        except TypeError:
+            mod.check_shell(command)
         return "ALLOW"
     except Denied:
         return "DENY"
