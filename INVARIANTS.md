@@ -48,9 +48,10 @@ decision record in `docs/decisions/`, not just a PR.
   compact structured summary the tool already produced.
 - **Parse once, query everywhere.** Relationship questions (callers, users,
   impact, coverage) go through `.repoindex/index.db`; relationship tools
-  (`rq`, `testmap` lookups, `codediff` if built) never re-parse source.
-  Excerpt and orientation tools (`xread`, `sgrep`, `repomap`) may parse
-  directly — they must keep working when no index exists.
+  (`codediff`; `rq`/`testmap` before their archival — docs/decisions/0009)
+  never re-parse source. Excerpt and orientation tools (`xread`, `sgrep`,
+  `repomap`) may parse directly — they must keep working when no index
+  exists.
 - **Uncertainty is stored, not hidden — and not inflated.** Confidence is
   two-valued: `resolved` | `heuristic` (tools/repoindex/DECISIONS.md
   ADR-003). Do not introduce ordinal scales (HIGH/MEDIUM/LOW); static

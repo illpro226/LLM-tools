@@ -1,3 +1,0 @@
-#!/bin/sh
-PY=$(command -v python || command -v python3) || { echo "testmap: no python interpreter found" >&2; exit 127; }
-exec "$PY" "$(dirname "$0")/../tools/testmap/testmap.py" "$@"

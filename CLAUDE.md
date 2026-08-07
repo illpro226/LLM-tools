@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 LLM-tools is a toolkit of small, composable CLI utilities that help coding agents (Claude Code, aider, etc.) spend fewer tokens per task. The unifying idea: never put raw, bulky content into an agent's context when a compressed, targeted view will do.
 
-The suite is complete at 11 tools — `tokq`, `runlite`, `xread`, `sgrep` (Wave 1), `repomap`, `gitbrief`, `structo` (Wave 2), `repoindex`, `rq`, `testmap` (Wave 3), and `codediff` (Wave 4). Two of them, `rq` and `testmap`, are **retired from default use** (docs/decisions/0006): a month of logged usage produced 2 calls and 0 calls respectively, so they no longer appear in the guidance below. The code and tests stay; `repoindex` stays fully live as the library behind `codediff`. The build list is closed (docs/decisions/0003): `factbook` and `docsnip` stay deferred indefinitely, revivable only on recorded dogfooding evidence. Neither was ever implemented, and their scaffold directories (plus `callgraph`, merged into `rq` before implementation) were removed from the repo (docs/decisions/0008) — the specs live on in 0001/0003 if revival ever needs a starting point. Check a tool's `STATUS.md` first — it says outright whether the tool is "Scaffold only" or implemented.
+The suite is complete at 11 built tools — `tokq`, `runlite`, `xread`, `sgrep` (Wave 1), `repomap`, `gitbrief`, `structo` (Wave 2), `repoindex`, `rq`, `testmap` (Wave 3), and `codediff` (Wave 4) — of which 9 are live. `rq` and `testmap` were retired from default use on 2026-08-06 (docs/decisions/0006: a month of logged usage produced 2 calls and 0 calls respectively) and then archived on 2026-08-07 (docs/decisions/0009) once that retirement held with no new signal: their code and tests moved to `archive/rq/` and `archive/testmap/`, out of `tools/`, off PATH, and out of the guard hook's tracked tool list. `repoindex` stays fully live as the library behind `codediff`. The build list is closed (docs/decisions/0003): `factbook` and `docsnip` stay deferred indefinitely, revivable only on recorded dogfooding evidence. Neither was ever implemented, and their scaffold directories (plus `callgraph`, merged into `rq` before implementation) were removed from the repo (docs/decisions/0008) — the specs live on in 0001/0003 if revival ever needs a starting point. Check a tool's `STATUS.md` first — it says outright whether the tool is "Scaffold only", implemented, or archived.
 
 - [`START.md`](START.md) — canonical description of every tool in the suite plus its bootstrap prompt. Read this before starting a new tool.
 - [`INVARIANTS.md`](INVARIANTS.md) — rules that hold across every tool (output, semantics, performance, docs). A change that breaks one needs a decision record in `docs/decisions/`, not just a PR.
@@ -19,7 +19,8 @@ The suite is complete at 11 tools — `tokq`, `runlite`, `xread`, `sgrep` (Wave 
   default use on logged-usage evidence · 0007 savings-log operations
   (no repeat-call memo; compact `events.jsonl` only past 4 MB / 50 ms)
   · 0008 removes the never-built `callgraph`/`docsnip`/`factbook`
-  scaffold directories.
+  scaffold directories · 0009 archives `rq`/`testmap` (moved to
+  `archive/`, unwired from bin/hook/docs) once the retirement held.
 - `docs/README.md`, `docs/PRDs/README.md`, `docs/known-issues/README.md` —
   index pages; per-tool PRDs live at `tools/<name>/PRD.md`.
 - `doc/` is a compatibility alias for `docs/` — put new documentation in `docs/`, not `doc/`.
@@ -55,9 +56,9 @@ jobs they cover — real usage is the field test fixtures can't provide:
 **Situational, not default.** `tokq lint`/`tokq dir` when you're deciding
 what to cut from a document or hunting where token weight lives — not as a
 finishing ritual on every doc edit. (`rq` and `testmap` used to be listed
-here too. Logged usage says the trigger never fires: `sgrep` settles
-"who calls this?" cheaper, and these test suites run in seconds. Don't
-reach for them; see docs/decisions/0006.)
+here too. Logged usage said the trigger never fired: `sgrep` settles
+"who calls this?" cheaper, and these test suites run in seconds. They're
+now archived, not just unreached-for; see docs/decisions/0009.)
 
 Two rules make this useful rather than ritual: (1) whenever a built-in was
 genuinely easier or a tool's output missed what you needed, file it in
@@ -74,7 +75,7 @@ implemented status, add it to the list above.
 - Prefer Python or Go, minimal dependencies, fast startup (~100ms budget on the no-heavy-deps path).
 - Offline and deterministic by default: any LLM call is opt-in behind an explicit flag and never receives raw source/diffs, only the tool's own compact structured summary.
 - Confidence is two-valued (`resolved` | `heuristic`), never an ordinal HIGH/MEDIUM/LOW scale — static analysis can't honestly support finer grades.
-- Relationship-shaped tools (`rq`, `testmap` lookups) query the shared `.repoindex/index.db` rather than re-parsing source; excerpt/orientation tools (`xread`, `sgrep`, `repomap`) parse directly and must keep working when no index exists.
+- Relationship-shaped queries go through the shared `.repoindex/index.db` rather than re-parsing source (this was `rq`'s job before it was archived — docs/decisions/0009; `repoindex` itself still owns the schema); excerpt/orientation tools (`xread`, `sgrep`, `repomap`) parse directly and must keep working when no index exists.
 
 ## Working in a tool directory
 
@@ -119,9 +120,9 @@ python -m pytest        # run tests (58 tests against tests/fixtures/repo/)
 ./repoindex.py status    # freshness + per-language file/symbol counts
 ./repoindex.py sql "SELECT ..."   # read-only escape hatch, column-aligned
 
-# tools/rq and tools/testmap are retired from default use (0006). Still
-# implemented and tested (`python -m pytest` in either dir); read their
-# STATUS.md before changing them, don't reach for them mid-task.
+# rq and testmap are archived, not in tools/ (0009). Code and tests live
+# in archive/rq/ and archive/testmap/ (`python -m pytest` still runs
+# there); not installed, not on PATH, not reachable mid-task.
 
 cd tools/codediff
 python -m pytest        # run tests (38 tests; scripted temp repos, needs git + sibling repoindex)

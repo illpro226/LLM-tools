@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-REPOINDEX_DIR = Path(__file__).resolve().parents[2] / "repoindex"
+REPOINDEX_DIR = Path(__file__).resolve().parents[3] / "tools" / "repoindex"
 sys.path.insert(0, str(REPOINDEX_DIR))
 
 FIXTURE_REPO = REPOINDEX_DIR / "tests" / "fixtures" / "repo"

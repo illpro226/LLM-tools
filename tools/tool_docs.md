@@ -326,9 +326,12 @@ suite).
 
 Maintains one incremental, stdlib-parser-built SQLite database at
 `.repoindex/index.db` holding symbols and every cheap-to-extract
-relationship, so `rq`, `testmap`, and `codediff` become SQL queries (or
-pure-function reuse, for `codediff`) over one parse instead of each
-re-parsing the repo independently.
+relationship, so relationship-shaped tools become SQL queries (or, for
+`codediff`, pure-function reuse of the extraction library) over one parse
+instead of each re-parsing the repo independently. `rq` and `testmap` were
+this database's original query layer and coverage recorder; both are
+archived now (docs/decisions/0009), but the schema they used stays live —
+`update` still preserves `testmap record`-style coverage rows.
 
 ```
 repoindex build              # full index
@@ -363,98 +366,10 @@ reconstructs unchanged files from the DB so repo-wide passes still see
 everything — all inside one transaction. `.repoindex/` is added to a
 generated `.gitignore` entry and never committed.
 
-**Non-goals:** answering user-facing questions itself (that's `rq`); full
-type inference/IDE-grade resolution; indexing vendored/generated
-directories.
-
----
-
-## rq — query pack over the index
-
-**Status:** Implemented.
-
-Answers relationship questions about a codebase from the shared
-`.repoindex/index.db` — never parses source itself (ADR-002: data gaps are
-repoindex bugs, not rq's). Runs `repoindex update` before every query unless
-skipped.
-
-```
-rq whouses SYMBOL                  # inbound refs, grouped per matched symbol
-rq implements INTERFACE             # implementations, subclasses nested beneath
-rq inherits BASE                    # subclass tree
-rq impact SYMBOL [--depth N]        # blast radius + covering tests (default depth 3)
-rq publicapi [PATH]                 # exported symbols, optionally under PATH
-rq deadcode [--include-exported]    # symbols with zero inbound refs
-rq findcycles                       # import cycles between files, smallest first
-rq untested                         # exported symbols with no covering test
-```
-
-**Shared flags** (accepted before or after the subcommand; post-subcommand
-value wins if given both places): `--root DIR`, `--json`, `--max-tokens N`
-(leaf lists collapse to `(+N more)` counts), `--no-update` (skip the
-automatic `repoindex update`), `--repoindex CMD` (freshness-guard binary;
-also env `RQ_REPOINDEX`; defaults to PATH, then the sibling
-`tools/repoindex/repoindex.py`).
-
-`SYMBOL` accepts a full qualname (`py/shapes.py::Rectangle`), a local name
-(`Rectangle`), or a member name (`area`); matching is case-sensitive (SQLite
-`LIKE` is case-insensitive, so rq uses `substr()` suffix matching instead).
-
-`impact` answers via a per-level SQL BFS, because the innermost-enclosing-
-symbol join can't live in a recursive CTE (ADR-003). `deadcode` is
-conservative by default — exported/dunder/test-file/heuristically-referenced
-symbols excluded, with a caveat that heuristic refs could hide real callers
-(ADR-004). `publicapi` prints no signatures because the index stores none
-(ADR-006).
-
-**Exit codes:** 0 success, 1 symbol not found, 2 no index and `repoindex`
-unavailable.
-
----
-
-## testmap — change-to-test scoper
-
-**Status:** Implemented.
-
-Maps changed files to the tests that likely cover them, so an agent runs a
-handful of tests instead of the whole suite. Pairs with `runlite`: scope
-first, distill second. Reads `.repoindex/index.db` — never parses source
-itself, and runs `repoindex update` first like `rq`.
-
-```
-testmap [FILES...]                  # map changed files (default: git diff
-                                     # --name-only HEAD + untracked) to
-                                     # covering tests
-testmap record -- pytest [ARGS]     # run the suite under coverage.py and
-                                     # write exact file->test rows into the
-                                     # shared index
-```
-
-**Output:** one target per line, tagged by the layer that selected it, most
-trusted wins when several layers agree:
-- `(coverage)` — recorded fact from `testmap record`
-- `(changed-test)` — a changed test file selects itself
-- `(convention)` — name-pair heuristic (`foo.py` / `test_foo.py`)
-- `(import depth N)` — reverse BFS over the import graph, N hops
-
-Followed by a ready-to-run command per detected framework (`pytest a b`,
-`npx vitest run a b`/`npx jest`, `go test ./pkg`). Best-effort, never a
-completeness claim: when nothing maps, the full-suite command is printed as
-fallback, and indexed changed files with no mapped tests are noted
-individually.
-
-**Flags:** `--depth N` (max transitive import depth, default 2), `--root
-DIR`, `--json`, `--max-tokens N` (target list collapses to `(+N more)`; run
-commands are never dropped), `--no-update`, `--repoindex CMD` (also env
-`TESTMAP_REPOINDEX`).
-
-`record` currently supports pytest only (needs `coverage.py`); it replaces
-prior coverage rows only for the test files seen in that run, and passes the
-test command's exit code through.
-
-**Exit codes:** 0 mapped (possibly to nothing), 1 changed files
-undeterminable (not a git work tree and no explicit file list given), 2 no
-index / record prerequisites missing.
+**Non-goals:** answering user-facing questions itself — that was `rq`'s
+job before it was archived (docs/decisions/0009; `codediff` is the live
+consumer now); full type inference/IDE-grade resolution; indexing
+vendored/generated directories.
 
 ---
 
@@ -511,7 +426,7 @@ sibling checkout works uninstalled).
 
 ---
 
-## Deferred / merged (not built)
+## Deferred / merged / archived (not built or not live)
 
 - **`factbook`**, **`docsnip`** — deferred indefinitely per
   `docs/decisions/0003`; revivable only via a new decision record citing
@@ -520,6 +435,13 @@ sibling checkout works uninstalled).
   0001/0003 if revival ever needs a starting point.
 - **`callgraph`** — merged into `rq` before implementation; no standalone
   binary, no directory.
+- **`rq`**, **`testmap`** — built, tested, and implemented, then retired
+  from default use on one month of near-zero logged calls
+  (`docs/decisions/0006`) and archived once that retirement held with no
+  new signal (`docs/decisions/0009`). Code and tests kept at
+  `archive/rq/`, `archive/testmap/`; not installed, not on PATH, not
+  tracked by the guard hook. Revival needs a new decision record citing
+  recorded evidence, same bar as `factbook`/`docsnip`.
 - **MCP stdio adapter** (`mcp/`) — accepted in principle
   (`docs/decisions/0004`) to expose xread/sgrep/structo/gitbrief as MCP
   tools, but not yet built.

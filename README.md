@@ -2,8 +2,11 @@
 
 Small, composable CLI tools that keep raw, bulky content out of an LLM
 coding agent's context — a compressed, targeted view instead of a whole
-file, a full `git diff`, or a wall of test output. Eleven tools, all
-implemented and tested, all standalone (stdlib-only Python).
+file, a full `git diff`, or a wall of test output. Nine tools, all
+implemented and tested, all standalone (stdlib-only Python). Two more,
+`rq` and `testmap`, were built and tested but are archived after a month
+of near-zero use (docs/decisions/0009) — code kept in `archive/`, not
+installed.
 
 ## Requirements
 
@@ -61,8 +64,10 @@ tokq --help
 | `codediff` | What a change *means* — API/behavior/removed/mechanical + risk flags | `codediff --staged` |
 | `tokq` | Token cost meter — flags context-wasteful files before you read them | `tokq dir .`, `tokq lint docs/` |
 | `repoindex` | Shared symbol/relationship index (`.repoindex/index.db`) that `codediff` builds on | `repoindex build` |
-| `rq` *(retired from default use, still works)* | Query the index: who-calls, impact, dead code, untested | `rq whouses FuncName` |
-| `testmap` *(retired from default use, still works)* | Map changed files to the tests that cover them | `testmap` |
+
+`rq` (query the index) and `testmap` (map changed files to covering
+tests) are archived — see `archive/rq/`, `archive/testmap/`, and
+docs/decisions/0009.
 
 Every tool prints plain, deterministic text with `path:line` references
 you can follow up on, and accepts `--max-tokens N` to cap output size
