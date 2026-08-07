@@ -1,5 +1,34 @@
 # guard hook: matches command patterns inside quoted strings and heredoc bodies
 
+**FIXED 2026-08-06 (guard hook `~/.claude/hooks/llm-tools-guard.py`)** —
+`mask_literals()` blanks quoted spans and heredoc bodies to `x` (same
+length, so match offsets still index the real string), and `check_shell`
+now matches every rule against the masked copy. That closes both
+directions at once, and makes the carve-out tests ask "does *this command*
+redirect?" rather than "does a `>` appear in these bytes?".
+
+Masking is skipped entirely when the call contains a command that
+*executes* its quoted argument — `ssh`, `wsl`, `docker/podman/kubectl
+exec`, `bash|sh|zsh|dash|pwsh|powershell -c`, `python|node|perl|ruby -c/-e`,
+`cmd /c`. There the quoted text really is a command line, so masking it
+would open a new bypass; those calls keep their pre-fix behaviour, which
+is what [`archive/guard-hook-denies-ssh-remote-payloads.md`](guard-hook-denies-ssh-remote-payloads.md)
+settled as WONTFIX. An *unterminated* quote is also left unmasked, so a
+stray apostrophe can't silently disarm every rule after it — masking can
+only ever fail closed.
+
+Verified two ways: 32 behavioural cases (both repros, both bypasses, every
+existing carve-out), and a 52-case old-vs-new differential over the
+pre-fix backup asserting that the only DENY→ALLOW flips are the quoted-prose
+false positives. Zero unintended loosening. The savings path benefits too
+— it locates the suite-tool invocation in the masked string, so `sgrep
+"a;b" path` no longer has its arguments truncated at the quoted `;`.
+
+Residual, by design: prose containing an exec-form invocation (a commit
+message mentioning `python -c` beside `json.loads`) still trips a rule.
+That's the fail-closed half, and narrowing it further would cost the
+guarantee above.
+
 **Date:** 2026-08-06
 **Tool:** LLM-tools guard hook (all shell rules)
 **Severity:** contains a live bypass introduced the same day — see
@@ -55,7 +84,7 @@ intact and it is specifically the quoted span that defeats it.
 **Direction 2 did not exist before 2026-08-06.** Replayed against the
 pre-change backup (`llm-tools-guard.py.bak-20260806`), both commands DENY.
 They were opened by the redirect/bounding carve-out added for
-[`archive/guard-hook-denies-redirected-searches.md`](archive/guard-hook-denies-redirected-searches.md).
+[`guard-hook-denies-redirected-searches.md`](guard-hook-denies-redirected-searches.md).
 
 That is worth stating plainly rather than filing as a neutral finding: the
 carve-out was correct in intent and is well-scoped across *commands*

@@ -27,8 +27,10 @@ The deny message now also states the carve-out, so a caller who *is* denied
 learns the rule instead of guessing at spellings — the issue's option 2,
 which turned out to be complementary rather than an alternative.
 
-**This fix opened a bypass**, filed as
-[`guard-hook-matches-patterns-inside-quoted-text.md`](../guard-hook-matches-patterns-inside-quoted-text.md)
+**This fix opened a bypass** — since closed the same day by `mask_literals()`,
+which blanks quoted spans before any rule is matched; both lines below deny
+again. Filed and resolved as
+[`guard-hook-matches-patterns-inside-quoted-text.md`](guard-hook-matches-patterns-inside-quoted-text.md)
 and verified against the pre-change backup. The carve-out tests are regexes
 over the raw command string, so a search whose *pattern* contains `>` or
 `| head` satisfies them from its own argument text:

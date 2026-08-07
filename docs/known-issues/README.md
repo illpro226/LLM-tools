@@ -31,6 +31,24 @@ open list. A `MITIGATED` issue (a real fix shipped but the underlying risk
 isn't fully closed out) stays in the open list, not the archive, until it's
 confirmed resolved.
 
+## Guard-hook issues specifically
+
+The guard hook (`~/.claude/hooks/llm-tools-guard.py`) lives outside this
+repo and most of this directory's history is about it. Its regression tests
+are `scripts/test-guard-hook.py` — **add a case there when you fix a
+guard-hook issue**, and run it before and after. Every carve-out and closed
+bypass in `archive/` is an entry in that CORPUS; the one fix that shipped
+without such a check ([`archive/guard-hook-denies-redirected-searches.md`](archive/guard-hook-denies-redirected-searches.md))
+opened a silent bypass the same day.
+
+```
+python scripts/test-guard-hook.py [--baseline PRE_CHANGE_COPY.py]
+```
+
+With `--baseline` it diffs verdicts against a pre-change copy of the hook
+and fails on any unintended DENY -> ALLOW. That direction matters more than
+it looks: the hook fails open, so a bypass gives no signal at all.
+
 A `WONTFIX` issue archives the same way. The open list means "there is a task
 here", so friction we've decided not to act on belongs in `archive/` with the
 reasoning recorded — the workaround is still worth finding when someone hits
