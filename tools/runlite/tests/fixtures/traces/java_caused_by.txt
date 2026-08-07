@@ -1,0 +1,10 @@
+Exception in thread "main" java.lang.IllegalStateException: could not start service
+	at com.example.app.Boot.run(Boot.java:42)
+	at com.example.app.Boot.main(Boot.java:17)
+Caused by: java.lang.NullPointerException: Cannot invoke "com.example.db.Row.id()" because "row" is null
+	at com.example.db.Repo.find(Repo.java:88)
+	at com.example.app.Service.load(Service.java:31)
+	at java.base/java.util.Optional.orElseGet(Optional.java:364)
+	at org.springframework.beans.factory.support.AbstractBeanFactory.getBean(AbstractBeanFactory.java:333)
+	at com.example.app.Boot.run(Boot.java:40)
+	... 1 more

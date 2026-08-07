@@ -1,0 +1,12 @@
+panic: runtime error: index out of range [3] with length 3
+
+goroutine 1 [running]:
+main.pick(0x3)
+	/app/pick.go:14 +0x1d
+main.handle({0xc000010030, 0x2})
+	/app/internal/handler.go:31 +0x45
+runtime.gopanic(0x4a1c60, 0xc0000140a0)
+	/usr/local/go/src/runtime/panic.go:920 +0x270
+main.main()
+	/app/main.go:8 +0x18
+exit status 2

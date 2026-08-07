@@ -1,0 +1,14 @@
+/app/src/index.js:14
+    throw new TypeError('handler is not a function');
+    ^
+
+TypeError: handler is not a function
+    at register (/app/src/index.js:14:11)
+    at Object.<anonymous> (/app/src/server.js:8:3)
+    at Module._compile (node:internal/modules/cjs/loader:1105:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1159:10)
+    at Module.load (node:internal/modules/cjs/loader:981:32)
+    at /app/node_modules/express/lib/router/index.js:280:10
+    at startServer (/app/src/boot.js:22:5)
+
+Node.js v20.11.0

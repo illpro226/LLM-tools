@@ -17,6 +17,9 @@ runlite -- CMD ARGS...                 # run and distill
 runlite --max-tokens N -- CMD...       # over budget: first problem full,
                                        # remaining problems one line each
 runlite --full-log PATH -- CMD...      # also save the raw log, print its path
+
+runlite trace [FILE]                   # distill a stack trace (stdin if no FILE)
+runlite trace --all-frames FILE        # keep library frames too
 ```
 
 Built-in extractors: pytest, jest/vitest, go test, cargo, tsc, eslint,
@@ -30,6 +33,40 @@ rather than dropping them silently.
 The header's `[log N B]` is the exact size of the log the report replaced,
 so you can tell a summary of 400 KB from a summary of 900 B. Use
 `--full-log PATH` when you want the bytes themselves.
+
+## `runlite trace`
+
+The same job for a trace runlite did not produce — one that arrived from a
+log file, CI, a running service, or a paste:
+
+```
+runlite trace app.log
+kubectl logs pod-xyz | runlite trace
+```
+
+Python, Java/JVM, Node, Go and Rust. The output is the exception plus the
+frames that are your code; runs of library frames collapse to one line:
+
+```
+# runlite trace: python, 1 trace, 8 frames → 4 shown (innermost first) [input 1017 B]
+
+ValueError: invalid literal: 'abc'
+  /app/parser.py:42  in parse_int
+  /app/service.py:27  in handle
+  … 4 site-packages frames
+  /app/main.py:11  in main
+during handling of  KeyError: 'user_id'
+  /app/store.py:9  in lookup
+```
+
+Frames always read innermost-first and chained exceptions always
+propagated-first, whatever order the language prints them in — so you read
+five languages the same way. Frame 0 is *not* kept just for being frame 0:
+in Rust and Go it is always unwind machinery. `--all-frames` turns
+collapsing off.
+
+Exit codes here are `trace`'s own, since it wraps nothing: 0 distilled a
+trace, 1 the input held none (said out loud, never silently), 125 internal.
 
 ### Example
 

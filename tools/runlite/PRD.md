@@ -19,10 +19,18 @@ Agents re-run builds, tests, and linters constantly, and each run dumps thousand
 - Generic fallback extractor: keep lines matching error/warning/fail patterns plus the last 20 lines of output.
 - For each failure, include the failure message and the nearest `file:line` reference.
 
+### Stack traces from elsewhere (added 2026-08-07, ADR-005)
+
+- `runlite trace [FILE]` distills a stack trace runlite did not run: from a log file, CI output, a service, a paste. Reads stdin when FILE is absent or `-`.
+- Languages: Python, Java/JVM, Node, Go, Rust. Output is the exception plus the frames that are this project's code; runs of library frames collapse to a counted line.
+- Frames normalized to innermost-first, chained exceptions to propagated-first, so the output reads identically across languages.
+- No inferred "probable cause": the suite is offline and deterministic, and a guessed cause carries no `path:line`.
+
 ### CLI surface
 
 - `--max-tokens N` — when over budget, keep the first failure in full and summarize the remaining failures as one line each.
 - `--full-log PATH` — also save the raw log to a file (in a scratch dir) and print its path, so an agent can drill in with `xread`.
+- `trace --all-frames` — do not collapse runs of library frames.
 
 ### Output conventions
 

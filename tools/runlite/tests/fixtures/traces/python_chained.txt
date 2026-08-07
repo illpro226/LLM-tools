@@ -1,0 +1,25 @@
+Traceback (most recent call last):
+  File "/app/store.py", line 9, in lookup
+    return self._rows[key]
+           ~~~~~~~~~~^^^^^
+KeyError: 'user_id'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/main.py", line 11, in main
+    sys.exit(cli())
+             ^^^^^
+  File "/usr/lib/python3.11/site-packages/click/core.py", line 1157, in __call__
+    return self.main(*args, **kwargs)
+  File "/usr/lib/python3.11/site-packages/click/core.py", line 1078, in main
+    rv = self.invoke(ctx)
+  File "/usr/lib/python3.11/site-packages/click/core.py", line 1434, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+  File "/usr/lib/python3.11/site-packages/click/core.py", line 783, in invoke
+    return __callback(*args, **kwargs)
+  File "/app/service.py", line 27, in handle
+    return parse_int(raw)
+  File "/app/parser.py", line 42, in parse_int
+    raise ValueError("invalid literal: %r" % raw) from None
+ValueError: invalid literal: 'abc'

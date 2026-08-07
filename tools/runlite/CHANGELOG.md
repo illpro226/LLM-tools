@@ -1,5 +1,23 @@
 # runlite Changelog
 
+- 2026-08-07: v0.4.0 — `runlite trace [FILE]` (or stdin) distills a stack
+  trace runlite did not produce: one that arrived from a log file, CI, a
+  service, a paste. Python, Java/JVM, Node, Go and Rust, parsed to the
+  exception plus the frames that are this project's code, with runs of
+  library frames collapsed to `… 4 site-packages frames`. Two
+  normalizations make the output readable without knowing the language:
+  frames are always innermost-first, and chained exceptions
+  (`Caused by:`, `During handling of…`) are always propagated-first —
+  Python needs both reversed. Keeping the innermost frame unconditionally
+  turned out to be wrong for Rust and Go, whose frame 0 is always unwind
+  machinery (`rust_begin_unwind`, `runtime.gopanic`), so the ends are kept
+  only when no frame is project code at all. Exits 0 when it distilled a
+  trace, 1 when the input held none (never silently), 125 on its own
+  failure. Unbounded by default like the rest of runlite (ADR 0005);
+  `--max-tokens` ladders trace-#1-full → per-section frame caps → a
+  summary line per trace, every rung naming the flag and keeping at least
+  one `path:line` per exception. `--all-frames` opts out of collapsing.
+  40 new tests in `tests/test_runlite_trace.py` (76 total). See ADR-005.
 - 2026-08-06: v0.3.0 — the header reports the size of the log the report
   stands in for: `# runlite: exit 1 in 12.4s (pytest) 3 problems
   [log 128431 B]`. Two reasons, one for each reader. For the caller, a

@@ -16,6 +16,15 @@ exited 0 never reports failure-shaped findings: the exit code is the
 reliable signal and a contradicted finding is an extractor misfire.
 runlite exits with the wrapped command's exit code; its own failures use
 the reserved codes 125 (internal) and 127 (command not found).
+
+    runlite trace app.log
+    kubectl logs pod | runlite trace
+
+`trace` does the same job for a stack trace runlite did not produce —
+one that arrived from a log file, CI, a service, a paste. Python, Java,
+Node, Go and Rust traces are parsed to the exception plus the frames that
+are this project's code, with library runs collapsed. It exits 0 when it
+distilled a trace, 1 when the input held none, 125 on its own failure.
 """
 
 import argparse
@@ -30,6 +39,7 @@ __version__ = "0.3.0"
 
 EXIT_INTERNAL = 125   # runlite's own failure, never the wrapped command's
 EXIT_NOT_FOUND = 127
+EXIT_NO_TRACE = 1     # `trace` only: input held no recognizable stack trace
 
 TAIL_LINES = 20       # generic fallback keeps this many trailing lines
 MAX_CONTEXT = 6       # cc extractor: context lines kept per diagnostic
@@ -493,6 +503,571 @@ def render(exit_code, wall, ext_name, problems, tail, max_tokens, log_path,
     return lines
 
 
+# -------------------------------------------------------------------- traces
+# `runlite trace` distills a stack trace that arrived from somewhere runlite
+# did not run: a log file, CI output, a service, a paste. Same job as the
+# extractors above (drop the noise, keep the path:line), different intake.
+#
+# A trace is {"lang": str, "sections": [section]}, where a section is
+# {"kind": "raised"|"during handling of"|"direct cause of"|"caused by",
+#  "header": str, "frames": [frame]} and a frame is
+# {"ref": "path:line", "func": str, "project": bool}.
+#
+# Two normalizations make the output readable without knowing the language:
+# frames are always innermost-first (the failure site leads), and chained
+# exceptions are always propagated-first (what the caller actually saw
+# leads). Python is the language that needs both reversed.
+
+# Path fragments that mean "not this project's code", each with the label a
+# collapsed run of them gets. Checked against the path lowercased with
+# backslashes normalized to forward slashes.
+_LIB_PATH = (
+    ("site-packages", "site-packages"),
+    ("dist-packages", "site-packages"),
+    ("/lib/python", "python stdlib"),
+    ("/lib64/python", "python stdlib"),
+    ("/.pyenv/", "python stdlib"),
+    ("node_modules", "node_modules"),
+    ("/vendor/", "vendored"),
+    ("/rustc/", "rust stdlib"),
+    ("/library/std/", "rust stdlib"),
+    ("/library/core/", "rust stdlib"),
+    ("/library/alloc/", "rust stdlib"),
+    ("/.rustup/", "rust stdlib"),
+    (".cargo/registry", "crate"),
+    ("/usr/local/go/src/", "go stdlib"),
+    ("/go/pkg/mod/", "go module"),
+)
+# Synthetic frames: not files at all, never the caller's code.
+_LIB_PREFIX = (
+    ("node:", "node internal"),
+    ("<frozen", "interpreter"),
+    ("<string", "interpreter"),
+    ("<built-in", "interpreter"),
+)
+# Package prefixes for languages whose frames name a package, not a path.
+# ("internal/" is deliberately absent: Go projects use it for their own code.)
+_LIB_PKG = (
+    "java.", "javax.", "jdk.", "sun.", "com.sun.", "org.junit.",
+    "org.gradle.", "org.apache.maven.", "org.testng.", "kotlin.", "scala.",
+    "runtime.", "testing.", "core::", "std::", "alloc::", "rust_begin_unwind",
+)
+
+
+def _lib_label(path):
+    """The label for a library frame, or "" if the path looks like project
+    code."""
+    p = (path or "").replace("\\", "/").lower()
+    for frag, label in _LIB_PATH:
+        if frag in p:
+            return label
+    for frag, label in _LIB_PREFIX:
+        if p.startswith(frag):
+            return label
+    return ""
+
+
+def _is_library(path, func):
+    if _lib_label(path):
+        return True
+    f = (func or "").lstrip()
+    return f.startswith(_LIB_PKG)
+
+
+def _same_ref(a, b):
+    """Two path:line refs pointing at the same place, allowing for the
+    "./" and backslash spellings that differ within one trace."""
+    def norm(r):
+        r = r.replace("\\", "/")
+        return r[2:] if r.startswith("./") else r
+    return norm(a) == norm(b)
+
+
+def _frame(path, line, func):
+    return {"ref": "%s:%s" % (path, line), "func": (func or "").strip(),
+            "project": not _is_library(path, func)}
+
+
+def _section(kind, header, frames):
+    return {"kind": kind, "header": header.strip(), "frames": frames}
+
+
+# ---- python
+
+_PY_START = re.compile(r"^Traceback \(most recent call last\):\s*$")
+_PY_FRAME = re.compile(r'^\s+File "(.+?)", line (\d+)(?:, in (.+?))?\s*$')
+_PY_DURING = "During handling of the above exception"
+_PY_CAUSE = "The above exception was the direct cause"
+
+
+def parse_python_trace(text):
+    lines = text.splitlines()
+    blocks, pending = [], "raised"
+    i = 0
+    while i < len(lines):
+        if _PY_DURING in lines[i]:
+            pending = "during handling of"
+        elif _PY_CAUSE in lines[i]:
+            pending = "direct cause of"
+        elif _PY_START.match(lines[i]):
+            frames = []
+            j = i + 1
+            while j < len(lines):
+                m = _PY_FRAME.match(lines[j])
+                if m:
+                    frames.append(_frame(m.group(1), m.group(2), m.group(3)))
+                elif lines[j].strip() and not lines[j][:1].isspace():
+                    break  # unindented: the exception line ends the block
+                j += 1
+            header = lines[j].strip() if j < len(lines) else "(no exception line)"
+            # Python prints outermost-first; lead with the failure site.
+            frames.reverse()
+            blocks.append({"kind": pending, "header": header, "frames": frames})
+            pending = "raised"
+            i = j
+        i += 1
+    if not blocks:
+        return []
+    # A marker sits between two exceptions and names the relation, so it
+    # arrives attached to the *later* block ("B occurred during handling of
+    # A"). Reading propagated-first, that phrase has to label A, the block
+    # before it — hence the shift, then the reverse. The last block in text
+    # order is the one that propagated and is what "raised" belongs to.
+    kinds = [b["kind"] for b in blocks]
+    for i in range(len(blocks) - 1):
+        blocks[i]["kind"] = kinds[i + 1]
+    blocks[-1]["kind"] = "raised"
+    blocks.reverse()
+    return [{"lang": "python",
+             "sections": [_section(b["kind"], b["header"], b["frames"])
+                          for b in blocks]}]
+
+
+# ---- java / jvm
+
+_JAVA_FRAME = re.compile(
+    r"^\s+at ([\w$./<>]+)\(([^()]+?\.(?:java|kt|kts|scala|groovy)):(\d+)\)\s*$")
+_JAVA_FRAME_NOSRC = re.compile(r"^\s+at ([\w$./<>]+)\((?:Native Method"
+                               r"|Unknown Source)\)\s*$")
+_JAVA_HEAD = re.compile(
+    r"^(?:Exception in thread \"[^\"]*\" )?([\w$.]*(?:Exception|Error|Throwable)"
+    r"(?::.*)?)\s*$")
+_JAVA_CAUSE = re.compile(r"^Caused by:\s+(.+?)\s*$")
+_JAVA_SUPPRESSED = re.compile(r"^\s+Suppressed:\s+(.+?)\s*$")
+_JAVA_ELIDED = re.compile(r"^\s+\.\.\. \d+ (?:more|common frames omitted)\s*$")
+
+
+def parse_java_trace(text):
+    lines = text.splitlines()
+    sections = []
+    i = 0
+    while i < len(lines):
+        head, kind = None, None
+        m = _JAVA_CAUSE.match(lines[i])
+        if m:
+            head, kind = m.group(1), "caused by"
+        else:
+            m = _JAVA_SUPPRESSED.match(lines[i])
+            if m:
+                head, kind = m.group(1), "suppressed"
+            else:
+                m = _JAVA_HEAD.match(lines[i])
+                # A bare header only starts a trace if frames follow it.
+                if m and i + 1 < len(lines) and (
+                        _JAVA_FRAME.match(lines[i + 1])
+                        or _JAVA_FRAME_NOSRC.match(lines[i + 1])):
+                    head = m.group(1)
+                    kind = "raised" if not sections else "caused by"
+        if head is None:
+            i += 1
+            continue
+        frames = []
+        j = i + 1
+        while j < len(lines):
+            f = _JAVA_FRAME.match(lines[j])
+            if f:
+                frames.append(_frame(f.group(2), f.group(3), f.group(1)))
+            elif _JAVA_FRAME_NOSRC.match(lines[j]) or _JAVA_ELIDED.match(lines[j]):
+                pass  # no path:line to stand on; nothing to report
+            else:
+                break
+            j += 1
+        # JVM frames are already innermost-first, as are Caused-by chains.
+        sections.append(_section(kind, head, frames))
+        i = j
+    if not sections:
+        return []
+    return [{"lang": "java", "sections": sections}]
+
+
+# ---- node / javascript
+
+_JS_FRAME = re.compile(
+    r"^\s+at (?:(?:new |async )?(.+?) \()?([^()]+?):(\d+):\d+\)?\s*$")
+_JS_HEAD = re.compile(r"^\s*(?:Uncaught )?([\w$.]*(?:Error|Exception)\b.*)$")
+
+
+def parse_node_trace(text):
+    lines = text.splitlines()
+    sections = []
+    i = 0
+    while i < len(lines):
+        if not _JS_FRAME.match(lines[i]):
+            i += 1
+            continue
+        # Header is the nearest non-blank line above the frame run. Node
+        # precedes it with a source echo and a caret line; those never
+        # match _JS_HEAD, so an unrecognizable header degrades to a label
+        # rather than to a source line masquerading as one.
+        head = "(unlabeled stack)"
+        k = i - 1
+        while k >= 0 and not lines[k].strip():
+            k -= 1
+        if k >= 0:
+            m = _JS_HEAD.match(lines[k])
+            if m:
+                head = m.group(1).strip()
+        frames = []
+        j = i
+        while j < len(lines):
+            f = _JS_FRAME.match(lines[j])
+            if not f:
+                break
+            frames.append(_frame(f.group(2), f.group(3), f.group(1)))
+            j += 1
+        # V8 prints innermost-first already.
+        sections.append(_section("raised" if not sections else "caused by",
+                                 head, frames))
+        i = j
+    if not sections:
+        return []
+    return [{"lang": "node", "sections": sections}]
+
+
+# ---- go
+
+_GO_PANIC = re.compile(r"^(panic:|fatal error:)\s*(.*)$")
+_GO_SIGNAL = re.compile(r"^\[signal .*\]$")
+_GO_FUNC = re.compile(r"^(\S+\(.*\))$|^created by (\S+)")
+_GO_LOC = re.compile(r"^\t(.+?):(\d+)(?: \+0x[0-9a-f]+)?\s*$")
+
+
+def parse_go_trace(text):
+    lines = text.splitlines()
+    traces = []
+    i = 0
+    while i < len(lines):
+        m = _GO_PANIC.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        head = ("%s %s" % (m.group(1), m.group(2))).strip()
+        frames = []
+        j = i + 1
+        if j < len(lines) and _GO_SIGNAL.match(lines[j].strip()):
+            head += " " + lines[j].strip()
+            j += 1
+        while j < len(lines):
+            if _GO_PANIC.match(lines[j]):
+                break
+            f = _GO_FUNC.match(lines[j])
+            if f and j + 1 < len(lines):
+                loc = _GO_LOC.match(lines[j + 1])
+                if loc:
+                    func = f.group(1) or f.group(2)
+                    # Strip the argument dump: `main.work(0x14, 0x0)` names
+                    # a function, the hex values say nothing.
+                    func = func.split("(")[0]
+                    frames.append(_frame(loc.group(1), loc.group(2), func))
+                    j += 2
+                    continue
+            j += 1
+        # Go prints the panicking goroutine innermost-first.
+        traces.append({"lang": "go",
+                       "sections": [_section("raised", head, frames)]})
+        i = j
+    return traces
+
+
+# ---- rust
+
+_RS_PANIC_NEW = re.compile(r"^thread '(.+?)' panicked at (.+?):(\d+):\d+:\s*$")
+_RS_PANIC_OLD = re.compile(
+    r"^thread '(.+?)' panicked at '(.*)', (.+?):(\d+):\d+\s*$")
+_RS_FRAME = re.compile(r"^\s+\d+:\s+(.+?)\s*$")
+_RS_AT = re.compile(r"^\s+at (.+?):(\d+)(?::\d+)?\s*$")
+
+
+def parse_rust_trace(text):
+    lines = text.splitlines()
+    traces = []
+    i = 0
+    while i < len(lines):
+        new = _RS_PANIC_NEW.match(lines[i])
+        old = _RS_PANIC_OLD.match(lines[i])
+        if not (new or old):
+            i += 1
+            continue
+        if new:
+            # 1.72+ puts the location on the panic line and the message next.
+            site = _frame(new.group(2), new.group(3), "")
+            msg = lines[i + 1].strip() if i + 1 < len(lines) else ""
+            j = i + 2
+        else:
+            site = _frame(old.group(3), old.group(4), "")
+            msg = old.group(2)
+            j = i + 1
+        head = "panicked: %s" % msg if msg else "panicked"
+        frames = []
+        while j < len(lines):
+            if _RS_PANIC_NEW.match(lines[j]) or _RS_PANIC_OLD.match(lines[j]):
+                break
+            f = _RS_FRAME.match(lines[j])
+            if f and j + 1 < len(lines):
+                at = _RS_AT.match(lines[j + 1])
+                if at:
+                    frames.append(_frame(at.group(1), at.group(2), f.group(1)))
+                    j += 2
+                    continue
+            j += 1
+        # The panic site is the one frame always worth having; a trace with
+        # RUST_BACKTRACE unset has nothing else at all. The backtrace spells
+        # the same file "./src/calc.rs" where the panic line says
+        # "src/calc.rs", so compare normalized or it lands twice.
+        if not any(_same_ref(fr["ref"], site["ref"]) for fr in frames):
+            frames.insert(0, site)
+        traces.append({"lang": "rust",
+                       "sections": [_section("raised", head, frames)]})
+        i = j
+    return traces
+
+
+TRACE_PARSERS = [
+    ("python", re.compile(r"^Traceback \(most recent call last\):\s*$", re.M),
+     parse_python_trace),
+    ("rust", re.compile(r"^thread '.+?' panicked at ", re.M),
+     parse_rust_trace),
+    ("go", re.compile(r"^(?:panic:|fatal error:).*\n(?:.*\n)?goroutine \d+ \[",
+                      re.M), parse_go_trace),
+    ("java", re.compile(r"^\s+at [\w$./<>]+\([^()]+?\.(?:java|kt|kts|scala"
+                        r"|groovy):\d+\)\s*$", re.M), parse_java_trace),
+    ("node", re.compile(r"^\s+at .*?:\d+:\d+\)?\s*$", re.M),
+     parse_node_trace),
+]
+
+
+def detect_traces(text):
+    """Return (lang, traces). Parsers are tried in order of their earliest
+    fingerprint match, so a mixed log picks the trace that actually leads.
+    A parser that fingerprints but yields nothing falls through to the next
+    rather than reporting an empty result."""
+    hits = []
+    for rank, (name, fingerprint, parse) in enumerate(TRACE_PARSERS):
+        m = fingerprint.search(text)
+        if m:
+            hits.append((m.start(), rank, name, parse))
+    hits.sort()
+    for _, _, name, parse in hits:
+        traces = parse(text)
+        if traces:
+            return name, traces
+    return "", []
+
+
+# ---- frame selection
+
+def select_frames(frames):
+    """Keep every project frame and collapse each run of the rest.
+    Returns a list of ("frame", frame) / ("collapsed", count, where) items.
+
+    When no frame is this project's code, keep the innermost and outermost
+    instead: an all-library trace still has to show where it entered and
+    where it blew up rather than render as a bare exception line. The ends
+    are *not* kept otherwise, because in Rust and Go the innermost frames
+    are always panic machinery (`rust_begin_unwind`, `runtime.gopanic`) —
+    leading with those buries the line that actually broke."""
+    if not frames:
+        return []
+    keep = {i for i, f in enumerate(frames) if f["project"]}
+    if not keep:
+        keep = {0, len(frames) - 1}
+    out, run = [], []
+    for i, f in enumerate(frames):
+        if i in keep:
+            if run:
+                out.append(("collapsed", len(run), _where(run)))
+                run = []
+            out.append(("frame", f))
+        else:
+            run.append(f)
+    if run:
+        out.append(("collapsed", len(run), _where(run)))
+    return out
+
+
+def _where(frames):
+    """Shortest honest description of a collapsed run: the shared label if
+    every frame in the run agrees on one, else the neutral "library"."""
+    marks = {_lib_label(f["ref"].rsplit(":", 1)[0]) or "library"
+             for f in frames}
+    return marks.pop() if len(marks) == 1 else "library"
+
+
+# ---- rendering
+
+def _frame_line(f):
+    return "  %s%s" % (f["ref"], "  in " + f["func"] if f["func"] else "")
+
+
+def _trace_lines(trace, all_frames, limit=None):
+    """Render one trace. `limit` caps the rendered items per section, the
+    ladder's rung between "whole trace" and "one line per trace"; the cap
+    keeps the innermost items, which are nearest the failure."""
+    lines, shown = [], 0
+    for n, sec in enumerate(trace["sections"]):
+        prefix = "" if n == 0 else sec["kind"] + "  "
+        lines.append(prefix + sec["header"])
+        items = ([("frame", f) for f in sec["frames"]] if all_frames
+                 else select_frames(sec["frames"]))
+        cut = 0
+        if limit is not None and len(items) > limit:
+            cut = len(items) - limit
+            items = items[:limit]
+        for item in items:
+            if item[0] == "frame":
+                lines.append(_frame_line(item[1]))
+                shown += 1
+            else:
+                lines.append("  … %d %s frame%s"
+                             % (item[1], item[2], "s"[: item[1] != 1]))
+        if cut:
+            lines.append("  … %d outer frame%s" % (cut, "s"[: cut != 1]))
+        if not sec["frames"]:
+            lines.append("  (no frames with a file:line)")
+    return lines, shown
+
+
+def _trace_summary(trace):
+    """One line per trace, for the over-budget rung: the propagated
+    exception plus the innermost project frame that carries it."""
+    sec = trace["sections"][0]
+    ref = ""
+    for f in sec["frames"]:
+        if f["project"]:
+            ref = "  " + f["ref"]
+            break
+    else:
+        if sec["frames"]:
+            ref = "  " + sec["frames"][0]["ref"]
+    # A chained exception dropped without a word reads as one that never
+    # happened; the count is two tokens and keeps the summary honest.
+    rest = len(trace["sections"]) - 1
+    chained = "  (+%d chained)" % rest if rest else ""
+    return sec["header"] + ref + chained
+
+
+def render_traces(lang, traces, all_frames, max_tokens, input_bytes):
+    total = sum(len(s["frames"]) for t in traces for s in t["sections"])
+
+    def assemble(limit, collapse_rest, note):
+        lead = traces[:1] if collapse_rest else traces
+        bodies, shown = [], 0
+        for t in lead:
+            body, n = _trace_lines(t, all_frames, limit)
+            bodies.append(body)
+            shown += n
+        n = len(traces)
+        frames = "%d frames" % total if total != 1 else "1 frame"
+        seen = "" if shown == total else " → %d shown" % shown
+        lines = ["# runlite trace: %s, %d trace%s, %s%s (innermost first)"
+                 " [input %d B]"
+                 % (lang, n, "s"[: n != 1], frames, seen, input_bytes)]
+        if note:
+            lines.append(note)
+        for body in bodies:
+            lines.append("")
+            lines.extend(body)
+        if collapse_rest and len(traces) > 1:
+            lines.append("")
+            lines.extend(_trace_summary(t) for t in traces[1:])
+        return lines
+
+    lines = assemble(None, False, "")
+    if not max_tokens or _tokens_of(lines) <= max_tokens:
+        return lines
+
+    # Degradation ladder. Every rung is bounded, and every rung says so and
+    # names the flag (ADR-005) — a trimmed trace that looked complete would
+    # be read as "the caller's code appears nowhere in this stack".
+    note = ("# note: trimmed to fit --max-tokens %d (raise it, or "
+            "--max-tokens 0 for the whole trace)" % max_tokens)
+    # 1. Trace #1 in full, the rest to one line each — ADR-004's rule, and
+    #    trace #1 is the one that propagated.
+    if len(traces) > 1:
+        lines = assemble(None, True, note)
+        if _tokens_of(lines) <= max_tokens:
+            return lines
+    # 2. Cap frames per section, innermost kept: the failure site is the
+    #    last thing worth giving up.
+    for limit in (6, 4, 3, 2, 1):
+        lines = assemble(limit, True, note)
+        if _tokens_of(lines) <= max_tokens:
+            return lines
+    # 3. Floor: every exception, each with the one path:line that carries
+    #    it. Bounded by trace count, and never empty of references.
+    return ["# runlite trace: %s, %d trace%s, %s (summary only)"
+            " [input %d B]"
+            % (lang, len(traces), "s"[: len(traces) != 1],
+               "%d frames" % total if total != 1 else "1 frame", input_bytes),
+            note, ""] + [_trace_summary(t) for t in traces]
+
+
+def _read_trace_input(path):
+    """Return (text, bytes) or raise OSError."""
+    if not path or path == "-":
+        data = sys.stdin.buffer.read()
+    else:
+        with open(path, "rb") as fh:
+            data = fh.read()
+    return data.decode("utf-8", errors="replace"), len(data)
+
+
+def main_trace(argv):
+    parser = argparse.ArgumentParser(
+        prog="runlite trace",
+        description="distill a stack trace read from a file or stdin",
+        usage="runlite trace [options] [FILE]")
+    parser.add_argument("path", nargs="?", default="-", metavar="FILE",
+                        help="trace file, or - / omitted for stdin")
+    parser.add_argument("--max-tokens", type=int, metavar="N", default=0,
+                        help="over budget: first trace full, rest one line")
+    parser.add_argument("--all-frames", action="store_true",
+                        help="do not collapse runs of library frames")
+    args = parser.parse_args(argv)
+
+    try:
+        text, nbytes = _read_trace_input(args.path)
+    except OSError as exc:
+        print("runlite: %s" % exc, file=sys.stderr)
+        return EXIT_INTERNAL
+
+    lang, traces = detect_traces(text)
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+    if not traces:
+        # Distinguishable from "distilled a trace", and never silent: the
+        # caller needs to know the input was not understood, not assume it
+        # held nothing worth reporting.
+        print("# runlite trace: no recognized stack trace [input %d B]"
+              % nbytes)
+        return EXIT_NO_TRACE
+    print("\n".join(render_traces(lang, traces, args.all_frames,
+                                  args.max_tokens, nbytes)))
+    return 0
+
+
 # ---------------------------------------------------------------------- CLI
 
 def _resolve_windows_cmd(cmd):
@@ -531,6 +1106,11 @@ def main(argv=None):
     except (AttributeError, ValueError):
         pass
     argv = sys.argv[1:] if argv is None else list(argv)
+    # Checked before option splitting so `trace` is a subcommand, not a
+    # command to wrap; `runlite -- trace ...` still wraps a program named
+    # trace.
+    if argv and argv[0] == "trace":
+        return main_trace(argv[1:])
     opts, cmd = _split_argv(argv)
 
     parser = argparse.ArgumentParser(

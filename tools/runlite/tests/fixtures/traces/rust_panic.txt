@@ -1,0 +1,14 @@
+thread 'main' panicked at src/calc.rs:12:5:
+attempt to divide by zero
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+stack backtrace:
+   0: rust_begin_unwind
+             at /rustc/07dca489a/library/std/src/panicking.rs:645:5
+   1: core::panicking::panic_fmt
+             at /rustc/07dca489a/library/core/src/panicking.rs:72:14
+   2: core::panicking::panic_const::panic_const_div_by_zero
+             at /rustc/07dca489a/library/core/src/panicking.rs:181:21
+   3: demo::calc::ratio
+             at ./src/calc.rs:12:5
+   4: demo::main
+             at ./src/main.rs:6:20
