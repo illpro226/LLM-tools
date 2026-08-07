@@ -1,5 +1,25 @@
 # No tool outlines a single code file
 
+**RESOLVED 2026-08-06 (xread v0.4.0):** `xread FILE --headings` now outlines
+code, taking the first of the two options below — the issue's own argument
+held: `--headings` already means "show me the structure of this file", and
+xread already builds this map to serve `--symbol`.
+
+Output is one line per symbol with kind and span, nesting carried by
+indentation rather than a repeated qualified name:
+
+```
+tools/sgrep/sgrep.py:217  function render [217-265]
+tools/sgrep/sgrep.py:274    function note [274-286]
+```
+
+The span is the part that earns its keys: it says what a follow-up
+`--symbol` will cost before you spend it. A test asserts every name the
+outline prints resolves as a `--symbol` argument, since feeding `--symbol`
+is the whole reason the mode exists. Files xread has no parser for still
+exit 2, now naming the languages it does parse rather than pointing at
+`repomap`. Verified on the 8,708-token guard hook that prompted this.
+
 **Date:** 2026-08-06
 **Tool:** xread / repomap (a gap between them)
 

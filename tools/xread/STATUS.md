@@ -1,11 +1,11 @@
 # xread Status
 
-Implemented (v0.3.0) and passing tests.
+Implemented (v0.4.0) and passing tests.
 
 - `xread.py` — single-file CLI covering all PRD modes plus the markdown mode
   from repo ADR-0001: `--symbol` (nested names, markdown sections),
   `--lines [--scope]`, `--query` (top-scoring blocks), `--headings`
-  (markdown outline). Citable `== path:start-end ==` headers, elision
+  (markdown outline, or a code file's symbols with their spans). Citable `== path:start-end ==` headers, elision
   markers, overlap merging, multi-file grouping, `--max-tokens` (drop
   lowest-score blocks, then trim at blank-line boundaries).
 - Parsers (stdlib only — ADR-004 deviation from the planned tree-sitter):
@@ -18,7 +18,7 @@ Implemented (v0.3.0) and passing tests.
   that starts at a heading (the payload-above-the-match case).
 - `--max-tokens` defaults to 2000 rather than unbounded (docs/decisions/0005);
   `--max-tokens 0` restores unbounded output.
-- Tests: `tests/test_xread.py` (39 tests) against fixtures in
+- Tests: `tests/test_xread.py` (41 tests) against fixtures in
   `tests/fixtures/` (sample.py, sample.ts, doc.md, rank.md, api.md,
   schema.prisma, generated big.py).
 

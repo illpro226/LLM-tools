@@ -30,7 +30,9 @@ When working in this repo, prefer the suite's own tools over built-ins for the
 jobs they cover — real usage is the field test fixtures can't provide:
 
 - `xread FILE --symbol NAME` instead of reading a whole file for one function;
-  `--query`/`--headings` for docs.
+  `--query` for docs. `--headings` outlines one file — markdown headings, or
+  a code file's symbols with their spans — and is the cheap first move on an
+  unfamiliar file, since `--symbol` needs a name you don't have yet.
 - `repomap` for orientation after a compaction or when entering an unfamiliar
   part of the repo, instead of `ls` + reading CLAUDE.md sections.
 - `structo` for any JSON/YAML/JSONL/XML you'd otherwise read raw; when the

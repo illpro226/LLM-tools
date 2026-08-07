@@ -1,5 +1,22 @@
 # xread Changelog
 
+- 2026-08-06: v0.4.0 - `--headings` outlines code files, not just markdown.
+  It prints one line per symbol with its kind and span
+  (`sgrep.py:217  function render [217-265]`), nesting carried by
+  indentation rather than a repeated qualified name. This closed a gap
+  between two tools that each deflected to the other: `xread --headings`
+  said "use repomap for code outlines" and `repomap` accepts only
+  directories, so there was no way to ask "what's in this file?" for a
+  code file - which is the precondition for `--symbol`, since you can't
+  name a symbol you haven't seen yet. The workaround was to `repomap` the
+  parent directory, which ranks and collapses across siblings and charges
+  for every other file in it. The span is what makes the listing
+  actionable: it says what a follow-up `--symbol` will cost before you
+  spend it. A file xread has no parser for still exits 2, now naming the
+  languages it does parse. 3 new tests (41 total), one asserting every
+  name the outline prints resolves as a `--symbol` argument. Closes
+  docs/known-issues/archive/no-way-to-outline-one-code-file.md.
+
 - 2026-07-31: v0.3.0 — `--max-tokens` now defaults to 2000 instead of unbounded
   (ADR-005, docs/decisions/0005-budgets-on-by-default.md); `--max-tokens 0`
   restores the old behaviour. Fixed: a sole region with no blank line to

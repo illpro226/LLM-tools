@@ -20,7 +20,8 @@ xread FILE --symbol NAME          # function/class/method body; nested
 xread FILE --lines A-B [--scope]  # line range; --scope expands to the
                                   # enclosing function/class
 xread FILE --query "text" [--top N]   # top keyword-scoring blocks
-xread FILE.md --headings          # markdown heading outline
+xread FILE --headings             # outline one file: markdown headings,
+                                  # or code symbols with their spans
 ```
 
 All modes accept multiple files (grouped in argument order) and

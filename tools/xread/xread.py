@@ -9,7 +9,9 @@ Prints just the relevant parts of a file instead of the whole thing:
     xread FILE --lines A-B          a line range; --scope expands it to the
                                     enclosing function/class
     xread FILE --query "text"       the top keyword-scoring blocks
-    xread FILE.md --headings        markdown heading outline
+    xread FILE --headings           outline of one file: markdown headings,
+                                    or the symbols of a code file with their
+                                    spans (the names --symbol takes)
 
 Every excerpt starts with a citable `== path:start-end ==` header; elision
 markers appear between non-adjacent excerpts. All modes accept multiple
@@ -28,7 +30,7 @@ import os
 import re
 import sys
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 PY_EXTS = {".py", ".pyi"}
 TS_EXTS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"}
@@ -542,22 +544,49 @@ def apply_budget(regions, sources, max_tokens):
 
 # --------------------------------------------------------------------- CLI
 
+def _code_outline(path, symbols):
+    """One line per symbol: `path:start  kind name [start-end]`.
+
+    Nesting is carried by indentation rather than by repeating the qualified
+    name, so a method costs its own name once. The span is what makes the
+    listing actionable — it tells you what a follow-up `--symbol` will cost
+    before you spend it.
+    """
+    out = []
+    for s in symbols:
+        depth = s["qual"].count(".") if s.get("qual") else 0
+        out.append("%s:%d  %s%s %s [%d-%d]"
+                   % (path, s["start"], "  " * depth, s["kind"], s["name"],
+                      s["start"], s["end"]))
+    return out
+
+
 def cmd_headings(files, max_tokens):
     out = []
     for path, lines, symbols in files:
-        if parser_for(path) is not parse_markdown:
-            raise XreadError("%s: --headings is for markdown files "
-                             "(use `repomap` for code outlines)" % path)
-        for h in symbols:
-            out.append("%s:%d  %s %s"
-                       % (path, h["start"], "#" * h["level"], h["name"]))
+        parse = parser_for(path)
+        if parse is None:
+            raise XreadError(
+                "%s: --headings needs a file xread can parse "
+                "(python, js/ts, markdown, prisma)" % path)
+        if parse is parse_markdown:
+            for h in symbols:
+                out.append("%s:%d  %s %s"
+                           % (path, h["start"], "#" * h["level"], h["name"]))
+        else:
+            # "What's in this file?" is the precondition for --symbol: you
+            # cannot ask for a symbol whose name you don't know yet. xread
+            # already builds this map to serve --symbol, and repomap only
+            # takes directories, so this used to be a gap between the two
+            # tools that each deflected to the other.
+            out.extend(_code_outline(path, symbols))
     if max_tokens:
         budget = max_tokens * 4
         used = 0
         for i, line in enumerate(out):
             used += len(line) + 1
             if used > budget and i < len(out) - 1:
-                return out[:i] + ["(… %d more headings elided for "
+                return out[:i] + ["(… %d more outline entries elided for "
                                   "--max-tokens %d)" % (len(out) - i,
                                                         max_tokens)]
     return out
@@ -586,7 +615,8 @@ def main(argv=None):
                         help="query mode: blocks to return (default %d)"
                              % DEFAULT_TOP)
     parser.add_argument("--headings", action="store_true",
-                        help="markdown: print the heading outline")
+                        help="outline the file: markdown headings, or code "
+                             "symbols with their spans")
     parser.add_argument("--max-tokens", type=int, metavar="N",
                         default=DEFAULT_MAX_TOKENS,
                         help="cap output at roughly N tokens "

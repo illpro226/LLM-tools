@@ -307,10 +307,39 @@ def test_headings_outline(capsys):
     assert "not a heading" not in out
 
 
-def test_headings_rejects_non_markdown(capsys):
-    code, _, err = run([fx("sample.py"), "--headings"], capsys)
+def test_headings_outlines_a_code_file(capsys):
+    """"What's in this file?" is the precondition for --symbol — you can't
+    ask for a symbol whose name you don't know. This used to be a gap:
+    --headings deflected to repomap, which takes only directories."""
+    code, out, _ = run([fx("sample.py"), "--headings"], capsys)
+    assert code == 0
+    path = fx("sample.py")
+    got = out.splitlines()
+    assert got[0] == "%s:8  function hypot [8-12]" % path
+    assert "class Greeter [33-48]" in out
+    # nesting is indentation, not a repeated qualified name
+    assert "%s:36    function __init__ [36-37]" % path in got
+    assert "Greeter.__init__" not in out
+
+
+def test_code_outline_names_are_valid_symbol_arguments(capsys):
+    """The outline exists to feed --symbol, so every name it prints must
+    resolve."""
+    _, out, _ = run([fx("sample.py"), "--headings"], capsys)
+    names = [l.split("]")[0].rsplit("[", 1)[0].split()[-1]
+             for l in out.splitlines()]
+    assert "greet" in names and "Greeter" in names
+    for name in names:
+        code, body, err = run([fx("sample.py"), "--symbol", name], capsys)
+        assert code == 0, "%s did not resolve: %s" % (name, err)
+
+
+def test_headings_rejects_unparseable_file(capsys, tmp_path):
+    target = tmp_path / "notes.txt"
+    target.write_text("plain text\n", encoding="utf-8")
+    code, _, err = run([str(target), "--headings"], capsys)
     assert code == 2
-    assert "markdown" in err
+    assert "xread can parse" in err
 
 
 def test_markdown_section_extraction(capsys):
