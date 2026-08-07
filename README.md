@@ -51,6 +51,24 @@ Verify the install:
 tokq --help
 ```
 
+## Optional: the guard hook
+
+`hooks/llm-tools-guard.py` is a Claude Code PreToolUse/PostToolUse hook
+that nudges (and for a few raw `git`/`grep`/`cat` shapes, denies) the
+agent toward these tools instead of built-ins, and logs a per-tool
+`savings_record.md` in this checkout. It's optional — every tool works
+standalone without it.
+
+```sh
+sh scripts/install-hook.sh        # Git Bash / WSL / macOS / Linux
+powershell -File scripts/install-hook.ps1   # native PowerShell
+```
+
+The script copies the hook to `~/.claude/hooks/` and prints the
+`settings.json` snippet to register it (merge it into any existing
+`hooks` key — don't overwrite the file) plus how to point savings
+logging at your checkout via `LLM_TOOLS_SAVINGS_ROOT`.
+
 ## The tools
 
 | Tool | What it's for | Example |
@@ -88,6 +106,7 @@ of raw `cat`/`grep`/`git diff`.
   (currently `rq`, `testmap`); code and tests kept, not installed or on
   PATH — see [`docs/decisions/0009`](docs/decisions/0009-archive-rq-testmap.md)
 - `bin/` — PATH shims
+- `hooks/` — optional Claude Code enforcement hook (see above); `scripts/install-hook.sh` / `.ps1` install it
 - `docs/` — cross-tool documentation: [`docs/decisions/`](docs/decisions/)
   (binding architecture/scope decisions), [`docs/PRDs/`](docs/PRDs/),
   [`docs/known-issues/`](docs/known-issues/)
