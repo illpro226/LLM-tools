@@ -1,5 +1,21 @@
 # structo Changelog
 
+- 2026-08-06: v0.5.0 - `--path "[-1]"` selects the last JSONL record, `[-2]`
+  the one before it, and sub-paths compose (`[-1].tool`). Append-only logs
+  are the normal case for JSONL - `events.jsonl`, session transcripts, ndjson
+  exports - and the interesting record is the newest one, whose index you
+  can't know without reading the file. `[N]` alone meant running structo
+  once to learn the count and again to fetch the record. Stays streaming:
+  a ring buffer holds the trailing |N| records, so memory is O(schema +
+  samples + |N|), pinned by a test. The header resolves the index
+  (`record -1 (1556)`), which answers "how many are there" in the same call.
+  A negative anywhere else - inside a document, or in `--select` - is
+  refused with the reason rather than silently reported as an absent path:
+  arrays are walked as an event stream with no length known until they
+  close, and buffering one would break the memory promise that is the point
+  of streaming. 7 new tests (62 total). Closes
+  docs/known-issues/archive/structo-path-no-negative-index.md.
+
 - 2026-07-31: v0.4.0 — `--max-tokens` now defaults to 2000 for schema output
   (ADR-006, docs/decisions/0005-budgets-on-by-default.md); `--select` and
   `--raw` are exempt from the default (not from an explicit cap) so piping

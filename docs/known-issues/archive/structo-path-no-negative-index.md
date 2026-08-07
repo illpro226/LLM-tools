@@ -1,5 +1,24 @@
 # structo: `--path` rejects negative JSONL record indices
 
+**RESOLVED 2026-08-06 (structo v0.5.0):** `[-1]` selects the last record,
+`[-2]` the one before, and sub-paths compose (`[-1].tool`). Implemented as
+the ring buffer this issue proposed — `_nth_record` keeps a
+`deque(maxlen=|N|)`, so memory stays O(schema + samples + |N|) and the
+streaming invariant is intact (pinned by a test that asserts the buffer is
+sized |N|, not the record count).
+
+Two things beyond the ask, both cheap:
+
+- The header resolves the index (`record -1 (1556)`). The reason you asked
+  for `[-1]` is that you don't know the count, so the same call now tells
+  you.
+- A negative index *anywhere else* — inside a document, or in `--select` —
+  is refused with the reason rather than silently reported as an absent
+  path. Arrays are walked as an event stream with no length known until
+  they close, so honoring `a.b[-1]` would mean buffering the array, which
+  breaks the memory promise that is the whole point of streaming. Refusing
+  loudly beats a confusing "--path not found".
+
 **Date:** 2026-08-06
 **Tool:** structo (v0.2.0+)
 

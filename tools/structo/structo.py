@@ -3,7 +3,8 @@
 
     structo FILE              summarize (format auto-detected)
     structo FILE --path a.b[0].c   zoom into a JSON/YAML subtree
-                              (a leading [N] picks JSONL record N)
+                              (a leading [N] picks JSONL record N;
+                               [-1] is the last record)
     structo FILE --raw --path ...  print the exact value at --path
                               (strings verbatim, else JSON)
     structo FILE --select a,b.c    project fields out of every record as
@@ -27,6 +28,7 @@ first-N, deterministic).
 """
 
 import argparse
+import collections
 import csv
 import itertools
 import json
@@ -34,7 +36,7 @@ import os
 import re
 import sys
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 DEFAULT_SAMPLE = 10
 # ADR-006: schema output is capped by default; --select/--raw are not.
@@ -748,7 +750,7 @@ def detect(path):
 def parse_path(spec):
     segs = []
     pos = 0
-    for m in re.finditer(r"([^.\[\]]+)|\[(\d+)\]|\.", spec):
+    for m in re.finditer(r"([^.\[\]]+)|\[(-?\d+)\]|\.", spec):
         if m.start() != pos:
             break
         pos = m.end()
@@ -759,6 +761,27 @@ def parse_path(spec):
     if pos != len(spec) or not segs:
         raise StructoError("bad --path %r (expected like a.b[0].c)" % spec)
     return segs
+
+
+def check_negatives(segs, fmt):
+    """A negative index is only answerable at the JSONL record position.
+
+    There, the file is a stream of records and `[-1]` costs a ring buffer of
+    the trailing |N|. Inside a document, arrays are walked as an event stream
+    with no length known until the closing bracket, so `a.b[-1]` would mean
+    buffering the array — which breaks the O(schema+samples) memory promise
+    that is the reason structo streams at all. Refuse and say why rather than
+    silently reporting the path as absent.
+    """
+    for i, (kind, want) in enumerate(segs):
+        if kind != "i" or want >= 0:
+            continue
+        if i == 0 and fmt == "jsonl":
+            continue
+        raise StructoError(
+            "negative index [%d] only selects a JSONL record, and only as "
+            "the first segment (structo streams; an array inside a document "
+            "has no known length until it ends)" % want)
 
 
 # ---------------------------------------------------- raw value extraction
@@ -865,8 +888,14 @@ def _nth_record(path, index):
     """Record `index` of a JSONL file, streaming; unparsable lines are not
     records (matching the summary's record count).
 
+    Negative indices count from the end (`-1` is the last record), which is
+    the common case for append-only logs where the record count isn't known
+    up front. It stays streaming: only the trailing |index| records are held,
+    so memory is O(|index|) rather than O(file).
+
     Returns (record, index) or (_MISSING, total records) if out of range."""
     seen = 0
+    tail = collections.deque(maxlen=-index) if index < 0 else None
     with open(path, encoding="utf-8", errors="replace") as fh:
         for line in fh:
             line = line.strip()
@@ -876,9 +905,13 @@ def _nth_record(path, index):
                 record = json.loads(line)
             except ValueError:
                 continue
-            if seen == index:
+            if tail is not None:
+                tail.append(record)
+            elif seen == index:
                 return record, seen
             seen += 1
+    if tail is not None and len(tail) == -index:
+        return tail[0], seen + index
     return _MISSING, seen
 
 
@@ -891,7 +924,11 @@ def parse_select(spec):
         name = raw.strip()
         if not name:
             raise StructoError("empty field in --select %r" % spec)
-        fields.append((name, parse_path(name)))
+        segs = parse_path(name)
+        # --select addresses fields *within* each record, so no position here
+        # is the JSONL record index — every negative is unanswerable.
+        check_negatives(segs, None)
+        fields.append((name, segs))
     return fields
 
 
@@ -1036,6 +1073,7 @@ def summarize(path, fmt, sample, target):
             if record is _MISSING:
                 raise StructoError("record [%d] not found (%s has %d "
                                    "records)" % (record_index, path, seen))
+            resolved = seen
             shape.feed(value_events(record))
         else:
             records = 0
@@ -1056,7 +1094,12 @@ def summarize(path, fmt, sample, target):
             raise StructoError("--path not found in %s" % path)
         extra = ""
         if record_index is not None:
-            extra = ", record %d" % record_index
+            # Resolve a negative index in the header: the caller asked for
+            # [-1] precisely because they didn't know the count, so naming
+            # the absolute record saves the second call that used to be the
+            # only way to learn it.
+            extra = (", record %d (%d)" % (record_index, resolved)
+                     if record_index < 0 else ", record %d" % record_index)
         elif records is not None:
             extra = ", records %d" % records
             if bad:
@@ -1143,6 +1186,7 @@ def main(argv=None):
                 raise StructoError("--path zooms into json/yaml/jsonl "
                                    "(%s detected as %s)" % (args.file, fmt))
             target = parse_path(args.path)
+            check_negatives(target, fmt)
         if args.max_tokens is None:
             # ADR-006: the schema digest is capped by default, but --select
             # and --raw feed other programs and refuse rather than truncate

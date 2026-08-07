@@ -169,6 +169,69 @@ def test_path_jsonl_record_index_with_subpath(capsys):
     assert "age" not in out
 
 
+def test_path_jsonl_negative_record_index(capsys):
+    """`[-1]` is the last record — the normal ask for an append-only log,
+    where the count isn't known without reading the file first."""
+    out = ok([fx("sample.jsonl"), "--path", "[-1]"], capsys)
+    assert '"eve"' in out
+
+
+def test_negative_record_header_resolves_the_index(capsys):
+    """The header names the absolute record, so learning "which one was
+    that / how many are there" doesn't cost a second call."""
+    out = ok([fx("sample.jsonl"), "--path", "[-2]"], capsys)
+    assert "record -2 (3)" in out
+
+
+def test_raw_jsonl_negative_index_with_subpath(capsys):
+    out = ok([fx("sample.jsonl"), "--raw", "--path", "[-1].user"], capsys)
+    assert out == "eve\n"
+
+
+def test_negative_record_out_of_range(capsys):
+    code, out, err = run([fx("sample.jsonl"), "--path", "[-9]"], capsys)
+    assert code == 2
+    assert "record [-9] not found" in err
+    assert "5 records" in err
+
+
+def test_negative_index_refused_inside_a_document(capsys):
+    """Streaming can't seek backwards through an array whose length isn't
+    known until it closes, so this refuses loudly instead of reporting the
+    path as simply absent."""
+    code, out, err = run([fx("sample.json"), "--path", "tags[-1]"], capsys)
+    assert code == 2
+    assert "negative index [-1]" in err
+    assert "JSONL record" in err
+
+
+def test_negative_index_refused_in_select(capsys):
+    code, out, err = run([fx("sample.jsonl"), "--select", "tags[-1]"], capsys)
+    assert code == 2
+    assert "negative index [-1]" in err
+
+
+def test_negative_record_lookup_stays_streaming():
+    """Memory is O(|index|), not O(file): the ring buffer holds |N| records,
+    so the streaming invariant survives the feature."""
+    import collections as _c
+    seen_maxlen = []
+    real = _c.deque
+
+    class Probe(_c.deque):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            seen_maxlen.append(kw.get("maxlen"))
+
+    structo.collections.deque = Probe
+    try:
+        record, idx = structo._nth_record(fx("sample.jsonl"), -2)
+    finally:
+        structo.collections.deque = real
+    assert record["user"] == "dan" and idx == 3
+    assert seen_maxlen == [2]  # not 5, the record count
+
+
 def test_path_jsonl_record_out_of_range(capsys):
     code, out, err = run([fx("sample.jsonl"), "--path", "[9]"], capsys)
     assert code == 2

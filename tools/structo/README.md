@@ -8,7 +8,8 @@ instead of the content. A 2 MB JSON dump becomes twenty lines.
 ./structo.py FILE                summarize (format auto-detected:
                                  json/jsonl/yaml/csv/tsv/xml/log)
 ./structo.py FILE --path a.b[0].c    zoom into a JSON/YAML subtree
-                                 (a leading [N] picks JSONL record N)
+                                 (a leading [N] picks JSONL record N;
+                                  [-1] is the last, [-2] the one before)
 ./structo.py FILE --raw --path ...   print the exact value at --path
                                  (strings verbatim, else JSON)
 ./structo.py FILE --select a,b.c     one TSV row per record, for piping

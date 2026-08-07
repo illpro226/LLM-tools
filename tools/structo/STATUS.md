@@ -1,6 +1,6 @@
 # structo Status
 
-Implemented (v0.4.0) and passing tests.
+Implemented (v0.5.0) and passing tests.
 
 - `structo.py` — single-file CLI printing the schema and shape of a data
   file instead of its content. Formats: JSON, JSONL, YAML (via PyYAML —
@@ -25,7 +25,10 @@ Implemented (v0.4.0) and passing tests.
   bounded table), first/last lines with `path:line` refs.
 - `--path a.b[0].c` zooms into a JSON/YAML subtree (per record for
   JSONL; a leading `[N]` picks JSONL record N instead — ADR-004);
-  unmatched paths and out-of-range records exit 2.
+  unmatched paths and out-of-range records exit 2. `[-1]` is the last
+  record (ring buffer of the trailing |N|, so streaming holds); a negative
+  index anywhere else is refused with the reason, since arrays inside a
+  document have no known length until they close.
 - `--raw` prints the exact value at `--path` instead of a schema:
   strings verbatim, everything else as JSON. Still streaming — JSONL
   parses one line, JSON uses a full-fidelity tokenizer mode that
@@ -53,7 +56,7 @@ Implemented (v0.4.0) and passing tests.
 - The ladder ends in sibling-key caps (100/40/15/5 with `… (+N more
   keys)`), so a very wide record still fits a budget — depth levels alone
   bottomed out at one line per top-level key (ADR-006).
-- Tests: `tests/test_structo.py` (55 tests) over one committed fixture
+- Tests: `tests/test_structo.py` (62 tests) over one committed fixture
   per format plus the generated large files (slow-marked).
 
 Not done / later: XML has no `--path` zoom and no `--select`; no
