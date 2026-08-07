@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 LLM-tools is a toolkit of small, composable CLI utilities that help coding agents (Claude Code, aider, etc.) spend fewer tokens per task. The unifying idea: never put raw, bulky content into an agent's context when a compressed, targeted view will do.
 
-The suite is complete at 11 tools — `tokq`, `runlite`, `xread`, `sgrep` (Wave 1), `repomap`, `gitbrief`, `structo` (Wave 2), `repoindex`, `rq`, `testmap` (Wave 3), and `codediff` (Wave 4). Two of them, `rq` and `testmap`, are **retired from default use** (docs/decisions/0006): a month of logged usage produced 2 calls and 0 calls respectively, so they no longer appear in the guidance below. The code and tests stay; `repoindex` stays fully live as the library behind `codediff`. The build list is closed (docs/decisions/0003): `factbook` and `docsnip` stay deferred indefinitely, revivable only on recorded dogfooding evidence. Their directories (plus `callgraph`, merged into `rq`) contain just the standard doc set (`README.md`, `PRD.md`, `ARCHITECTURE.md`, `CONVENTIONS.md`, `STATUS.md`, `ROADMAP.md`, `CHANGELOG.md`, `DECISIONS.md`, `TESTING.md`, `CONTRIBUTING.md`) and a `.gitkeep`. Check a tool's `STATUS.md` first — it says outright whether the tool is "Scaffold only" or implemented.
+The suite is complete at 11 tools — `tokq`, `runlite`, `xread`, `sgrep` (Wave 1), `repomap`, `gitbrief`, `structo` (Wave 2), `repoindex`, `rq`, `testmap` (Wave 3), and `codediff` (Wave 4). Two of them, `rq` and `testmap`, are **retired from default use** (docs/decisions/0006): a month of logged usage produced 2 calls and 0 calls respectively, so they no longer appear in the guidance below. The code and tests stay; `repoindex` stays fully live as the library behind `codediff`. The build list is closed (docs/decisions/0003): `factbook` and `docsnip` stay deferred indefinitely, revivable only on recorded dogfooding evidence. Neither was ever implemented, and their scaffold directories (plus `callgraph`, merged into `rq` before implementation) were removed from the repo (docs/decisions/0008) — the specs live on in 0001/0003 if revival ever needs a starting point. Check a tool's `STATUS.md` first — it says outright whether the tool is "Scaffold only" or implemented.
 
 - [`START.md`](START.md) — canonical description of every tool in the suite plus its bootstrap prompt. Read this before starting a new tool.
 - [`INVARIANTS.md`](INVARIANTS.md) — rules that hold across every tool (output, semantics, performance, docs). A change that breaks one needs a decision record in `docs/decisions/`, not just a PR.
@@ -17,7 +17,9 @@ The suite is complete at 11 tools — `tokq`, `runlite`, `xread`, `sgrep` (Wave 
   adapter for xread/sgrep/structo/gitbrief (planned in `mcp/`, not built)
   · 0005 token budgets on by default · 0006 retires `rq`/`testmap` from
   default use on logged-usage evidence · 0007 savings-log operations
-  (no repeat-call memo; compact `events.jsonl` only past 4 MB / 50 ms).
+  (no repeat-call memo; compact `events.jsonl` only past 4 MB / 50 ms)
+  · 0008 removes the never-built `callgraph`/`docsnip`/`factbook`
+  scaffold directories.
 - `docs/README.md`, `docs/PRDs/README.md`, `docs/known-issues/README.md` —
   index pages; per-tool PRDs live at `tools/<name>/PRD.md`.
 - `doc/` is a compatibility alias for `docs/` — put new documentation in `docs/`, not `doc/`.

@@ -5,15 +5,6 @@ coding agent's context — a compressed, targeted view instead of a whole
 file, a full `git diff`, or a wall of test output. Eleven tools, all
 implemented and tested, all standalone (stdlib-only Python).
 
-`tools/` has three extra directories — `callgraph`, `docsnip`, `factbook`
-— that are **not implemented**: doc stubs only (`README.md`, `PRD.md`,
-etc.), no code, no tests. `callgraph`'s functionality was folded into
-`rq`; `docsnip` and `factbook` are deferred indefinitely pending
-dogfooding evidence they're worth building (see
-[docs/decisions/0001](docs/decisions/0001-starting-list-and-deferrals.md) and
-[0003](docs/decisions/0003-close-the-list.md)). Each stub's own
-`STATUS.md` says "Scaffold only" up front.
-
 ## Requirements
 
 - Python 3.9+ on PATH (as `python` or `python3`)

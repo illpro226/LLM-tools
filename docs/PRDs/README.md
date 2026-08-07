@@ -16,10 +16,7 @@ Keep each PRD focused on one tool or one shared workflow.
 
 The canonical PRD for each tool lives next to the tool at `tools/<name>/PRD.md`:
 
-- [callgraph](../../tools/callgraph/PRD.md) — dependency and call-relationship explorer
 - [codediff](../../tools/codediff/PRD.md) — semantic diff summarizer
-- [docsnip](../../tools/docsnip/PRD.md) — dependency doc/signature extractor
-- [factbook](../../tools/factbook/PRD.md) — persistent per-repo knowledge cache
 - [gitbrief](../../tools/gitbrief/PRD.md) — git state summarizer
 - [repoindex](../../tools/repoindex/PRD.md) — shared repo-wide symbol database
 - [repomap](../../tools/repomap/PRD.md) — repository skeleton generator

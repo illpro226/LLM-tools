@@ -515,10 +515,11 @@ sibling checkout works uninstalled).
 
 - **`factbook`**, **`docsnip`** — deferred indefinitely per
   `docs/decisions/0003`; revivable only via a new decision record citing
-  recorded `docs/known-issues/` evidence. Their directories hold only the
-  standard doc set + `.gitkeep`.
+  recorded `docs/known-issues/` evidence. Never implemented; their scaffold
+  directories were removed (`docs/decisions/0008`) — the specs live on in
+  0001/0003 if revival ever needs a starting point.
 - **`callgraph`** — merged into `rq` before implementation; no standalone
-  binary.
+  binary, no directory.
 - **MCP stdio adapter** (`mcp/`) — accepted in principle
   (`docs/decisions/0004`) to expose xread/sgrep/structo/gitbrief as MCP
   tools, but not yet built.
