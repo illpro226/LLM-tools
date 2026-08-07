@@ -1,5 +1,17 @@
 # sgrep Changelog
 
+- 2026-08-06: v0.4.1 — paths are normalized to forward slashes at ingest.
+  `rg` echoes the separator of the path it was given, so on Windows a
+  directory search printed `tools/sgrep\sgrep.py` while naming the file
+  printed `tools/sgrep/sgrep.py`, and passing both put both forms in one
+  output. Nothing broke — either spelling is valid input to `xread` — but
+  a `path:line` reference is a stable identifier by INVARIANTS, and two
+  references to one file must not compare unequal as strings. Normalizing
+  at the parser (not the render sites) also makes the dict key canonical,
+  so per-file counts and ranking can't split one file into two entries.
+  Same class as archive/tokq-dir-backslash-paths-on-windows.md. 1 new test
+  (33 total). Closes
+  docs/known-issues/archive/sgrep-mixed-path-separators-on-windows.md.
 - 2026-08-06: v0.4.0 — `-C` context lines no longer repeat the file path.
   They print as `  248-  text` under the `== path (N matches) ==` header
   that already names the file; match lines keep the full `path:line:` and

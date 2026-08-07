@@ -25,7 +25,7 @@ import re
 import subprocess
 import sys
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 SHOW_ALL_LIMIT = 5    # files with <= this many matching lines show them all
 REPRESENTATIVES = 3   # distinct lines shown when a file exceeds the limit
@@ -123,6 +123,12 @@ def parse_stream(lines):
         path = data["path"].get("text")
         if not path:  # non-UTF-8 path (base64 variant): not worth the cost
             continue
+        # rg echoes the separator of the path it was given, so a directory
+        # search yields `dir\file.py` while naming the file yields
+        # `dir/file.py`. Normalize at ingest: paths are display-and-reference
+        # values here (sgrep never reopens them), and stable `path:line`
+        # references are a suite invariant.
+        path = path.replace("\\", "/")
         entry = files.setdefault(
             path, {"count": 0, "matches": [], "contexts": {}})
         text = (data["lines"].get("text") or "").rstrip("\r\n")

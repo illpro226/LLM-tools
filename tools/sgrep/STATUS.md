@@ -1,6 +1,6 @@
 # sgrep Status
 
-Implemented (v0.4.0) and passing tests.
+Implemented (v0.4.1) and passing tests.
 
 - `sgrep.py` — single-file CLI covering all PRD modes: condensed ranked
   digest, `--files-only`, `--counts-only`, `--no-collapse`,
@@ -24,7 +24,10 @@ Implemented (v0.4.0) and passing tests.
   (INVARIANTS.md). Measured -23% output on context searches, and the reason
   sgrep stopped being the one suite tool that often printed more than the
   raw `rg` it replaced.
-- Tests: `tests/test_sgrep.py` (32 tests) — parser/dedupe/rank/budget
+- Paths are normalized to `/` at the parser, so a directory-scoped
+  search and an explicitly-named file report the same file identically
+  on Windows (`rg` echoes whichever separator it was given).
+- Tests: `tests/test_sgrep.py` (33 tests) — parser/dedupe/rank/budget
   against canned `rg --json` streams in `tests/fixtures/rg-output/`;
   5 end-to-end tests run against real ripgrep and skip when absent.
 

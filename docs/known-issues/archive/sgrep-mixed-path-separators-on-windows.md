@@ -1,5 +1,13 @@
 # sgrep: mixed path separators on Windows depending on how the path was given
 
+**RESOLVED 2026-08-06 (sgrep v0.4.1):** `parse_stream` normalizes `\` to
+`/` at ingest, so every downstream consumer — dict key, ranking, counts,
+render — sees one canonical spelling no matter how the path was supplied.
+Fixing at the parser rather than the render sites was deliberate: the path
+is also the dict key, so a file reached both ways would otherwise have
+split into two entries with two separate counts. Verified against the
+repro below; 1 new test (33 total).
+
 **Date:** 2026-08-06
 **Tool:** sgrep (v0.4.0)
 

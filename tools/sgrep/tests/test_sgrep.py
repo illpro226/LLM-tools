@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import shutil
@@ -68,6 +69,27 @@ def test_parse_is_incremental():
 
     files = sgrep.parse_stream(one_at_a_time())
     assert len(files) == 4
+
+
+def test_parse_normalizes_backslash_paths():
+    """rg echoes the separator it was given; sgrep must not.
+
+    A directory search on Windows yields `dir\\file.py` while naming the
+    same file yields `dir/file.py`, so one run could print both forms for
+    one file. Paths are reference values (INVARIANTS: every claim line is
+    followable with xread) and must compare equal across calls.
+    """
+    events = [
+        json.dumps({"type": "match", "data": {
+            "path": {"text": r"src\auth.py"},
+            "lines": {"text": "needle\n"}, "line_number": 4}}),
+        json.dumps({"type": "match", "data": {
+            "path": {"text": "src/auth.py"},
+            "lines": {"text": "needle\n"}, "line_number": 9}}),
+    ]
+    files = sgrep.parse_stream(events)
+    assert list(files) == ["src/auth.py"]
+    assert files["src/auth.py"]["count"] == 2
 
 
 def test_parse_context_events():
