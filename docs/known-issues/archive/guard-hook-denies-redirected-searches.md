@@ -27,11 +27,22 @@ The deny message now also states the carve-out, so a caller who *is* denied
 learns the rule instead of guessing at spellings — the issue's option 2,
 which turned out to be complementary rather than an alternative.
 
-One limitation is unfixed and now filed separately as
-[`guard-hook-matches-patterns-inside-quoted-text.md`](../guard-hook-matches-patterns-inside-quoted-text.md):
-the redirect test is a regex over the raw string, so a `>` inside a quoted
-pattern would read as a redirect. That needs the quote-aware tokenizer the
-hook already has on its savings path, applied to the deny path.
+**This fix opened a bypass**, filed as
+[`guard-hook-matches-patterns-inside-quoted-text.md`](../guard-hook-matches-patterns-inside-quoted-text.md)
+and verified against the pre-change backup. The carve-out tests are regexes
+over the raw command string, so a search whose *pattern* contains `>` or
+`| head` satisfies them from its own argument text:
+
+```
+ALLOW  rg -n "a>b" src        (denied before this change)
+ALLOW  rg -n "x | head" src   (denied before this change)
+```
+
+Reachable by accident, not just by evasion — `rg "a->b"` is an ordinary
+search. Scoping across commands was handled here; scoping *within* a
+command's own quoting was not, and needs the quote-aware tokenizer the hook
+already has on its savings path. Read that issue before treating this one
+as settled.
 
 **Date:** 2026-08-06
 **Tool:** LLM-tools guard hook (grep/rg rule)
