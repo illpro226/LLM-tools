@@ -12,30 +12,32 @@ TARBALL=/tmp/llm-tools.tar.gz
 HOOK="${GUARD_HOOK:-$HOME/.claude/hooks/llm-tools-guard.py}"
 REMOTE_HOOK=.claude/hooks/llm-tools-guard.py
 
-git -C "$REPO" archive --format=tar.gz -o "$TARBALL" HEAD
-scp -o BatchMode=yes "$TARBALL" "$HOST:/tmp/llm-tools.tar.gz"
-ssh -o BatchMode=yes "$HOST" update-llm-tools
-rm -f "$TARBALL"
-
-# The guard hook is not in the repo (it lives in ~/.claude/), so nothing in
-# the tarball carries it and it used to drift — the server ran a copy three
-# weeks and one silent bypass behind. Ship it here, gated on its own tests.
+# Preflight the guard hook before anything ships, so a failing gate can't
+# leave a half-finished deploy behind.
 #
-# It deploys *verbatim*: SAVINGS_ROOT resolves per host at import by picking
-# the first entry of KNOWN_SAVINGS_ROOTS that exists on disk. If you add a
-# new host, add its checkout path there rather than patching the copy on the
-# server — hand-patching is exactly what caused the drift.
+# The hook is not in the repo (it lives in ~/.claude/), so nothing in the
+# tarball carries it and it used to drift — the server ran a copy three
+# weeks and one silent bypass behind.
 if [ ! -f "$HOOK" ]; then
     echo "deploy-npmserv: no guard hook at $HOOK (set GUARD_HOOK)" >&2
     exit 1
 fi
 
 python "$REPO/scripts/test-guard-hook.py" --hook "$HOOK" >/tmp/guard-tests.txt 2>&1 || {
-    echo "deploy-npmserv: guard hook tests FAILED - not deploying the hook" >&2
+    echo "deploy-npmserv: guard hook tests FAILED - nothing deployed" >&2
     tail -20 /tmp/guard-tests.txt >&2
     exit 1
 }
 
+git -C "$REPO" archive --format=tar.gz -o "$TARBALL" HEAD
+scp -o BatchMode=yes "$TARBALL" "$HOST:/tmp/llm-tools.tar.gz"
+ssh -o BatchMode=yes "$HOST" update-llm-tools
+rm -f "$TARBALL"
+
+# The hook deploys *verbatim*: SAVINGS_ROOT resolves per host at import by
+# picking the first entry of KNOWN_SAVINGS_ROOTS that exists on disk. If you
+# add a new host, add its checkout path there rather than patching the copy
+# on the server — hand-patching is exactly what caused the drift.
 ssh -o BatchMode=yes "$HOST" \
     "test -f $REMOTE_HOOK && cp -p $REMOTE_HOOK $REMOTE_HOOK.bak-\$(date +%Y%m%d-%H%M%S) || true"
 scp -o BatchMode=yes "$HOOK" "$HOST:$REMOTE_HOOK"
