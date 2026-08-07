@@ -1,0 +1,20 @@
+> bible-atlas@0.1.0 build
+> next build
+
+   ▲ Next.js 15.1.6
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully
+   Linting and checking validity of types ...
+Failed to compile.
+
+./src/lib/related.ts:42:18
+Type error: Argument of type 'string' is not assignable to parameter of type 'Sql'.
+
+  40 |   const rows = await db.$queryRaw`
+  41 |     SELECT id FROM "Person"
+> 42 |     WHERE ${PUBLIC_ENTITY_SQL}
+     |                  ^
+  43 |   `
+
+Next.js build worker exited with code: 1 and signal: null

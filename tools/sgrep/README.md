@@ -14,6 +14,8 @@ runtime (PATH, `--rg BIN`, or `SGREP_RG`). Matching is never reimplemented.
 sgrep PATTERN [PATH...]           # condensed, ranked digest
 sgrep PATTERN --files-only        # ranked matching-file list (cheapest)
 sgrep PATTERN --counts-only       # ranked list with match counts
+sgrep PATTERN --no-collapse       # every match line, not one per cluster
+                                  # (for "edit each of these" work)
 sgrep PATTERN --max-tokens N      # reduce: context lines, then matches
                                   # per file, then files shown
 sgrep PATTERN -C 2 -i -F -w -t py -g '*.rs'   # small rg pass-through set
@@ -34,6 +36,23 @@ tools/tokq/tokq.py:244:     _emit(lines, args.max_tokens)
 (+6 more similar)
 ...
 ```
+
+With `-C N`, match lines keep the full `path:line:` prefix and context
+lines carry a bare right-aligned line number instead:
+
+```
+$ sgrep "def apply_budget" tools/sgrep -C 2
+== tools/sgrep/sgrep.py (1 match) ==
+260-
+261-
+tools/sgrep/sgrep.py:262: def apply_budget(ranked, files, args):
+263-     """ADR-003: reduce context, then matches per file, then files shown."""
+264-     ctx = args.context
+```
+
+The block header already names the file, and a context line makes no claim
+of its own — repeating the path on each one was most of sgrep's per-line
+overhead against a raw `rg` dump.
 
 A file with more than 5 matching lines shows one representative per
 distinct normalized form (whitespace collapsed, digit runs equalized), 3 at

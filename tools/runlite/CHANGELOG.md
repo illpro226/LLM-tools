@@ -1,5 +1,30 @@
 # runlite Changelog
 
+- 2026-08-06: v0.3.0 — the header reports the size of the log the report
+  stands in for: `# runlite: exit 1 in 12.4s (pytest) 3 problems
+  [log 128431 B]`. Two reasons, one for each reader. For the caller, a
+  four-line report over a 400 KB log is a different claim than the same
+  four lines over 900 B — the figure says how much was suppressed rather
+  than absent. For the savings hook, it is the only honest baseline
+  available: runlite already buffers the whole log, so the number is exact
+  rather than estimated, and the alternative (re-running the build to
+  measure it) is slow, side-effecting and not even deterministic. runlite
+  had logged 180 calls with no credited savings at all before this.
+  `render()` omits the field when the size was not measured, so an
+  unmeasured run never prints as an empty log. 2 new tests (36 total).
+- 2026-08-06: v0.2.0 — a run that exited 0 never reports failure-shaped
+  findings, and a `next build` extractor. `next build` ends every
+  successful build with a route-type legend (`●  (SSG) …`) that trips the
+  jest/vitest bullet fingerprint, so three green builds in a row reported
+  `exit 0 … 1 problem / FAIL (SSG)` — a headline and a body saying opposite
+  things, with the body the one a reader believes. Two guards, because
+  either alone leaves the class open: the new extractor claims Next.js logs
+  before jest/vitest sees them (and still surfaces real `Failed to
+  compile.` / `Type error:` blocks, with the path Next prints on the line
+  above), and `render` now drops `FAIL`-titled problems on a zero exit,
+  naming the misfiring extractor rather than hiding it. 4 new tests
+  (34 total). Closes
+  docs/known-issues/archive/runlite-next-build-legend-read-as-failure.md.
 - 2026-07-31: stderr pinned to UTF-8 at entry alongside stdout. Error messages
   carry the same non-ASCII punctuation as normal output (em dashes,
   ellipses, arrows); on a cp1252 console they reached the caller as

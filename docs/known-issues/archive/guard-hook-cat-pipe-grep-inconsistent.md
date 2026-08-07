@@ -1,8 +1,18 @@
 # guard hook: `cat FILE | grep` allowed once, denied the next time
 
+**RESOLVED 2026-08-06 (sgrep v0.3.0) — as WONTFIX on the hook, FIXED on the
+cause.** The inconsistency does not reproduce: replayed against the current
+`llm-tools-guard.py`, both commands deny, and so does a bare `cat FILE`. One
+consistent verdict is what this asked for; the verdict is deny, not allow.
+`cat F | grep p` is a raw grep over a file wearing a pipe — allowing it would
+reopen the rule two lines above it, and the guard would be defeated by
+spelling. What *was* worth fixing is the pressure named in the last
+paragraph: `sgrep --no-collapse` now returns every match line instead of one
+representative per cluster, so exhaustive "edit each of these 40 sites" work
+has a first-class answer and no reason to reach for `cat` at all.
+
 **Date:** 2026-08-02
 **Tool:** LLM-tools guard hook (`cat` rule)
-**Status:** Open
 
 ## What I tried
 

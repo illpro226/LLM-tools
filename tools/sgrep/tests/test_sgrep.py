@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -98,6 +99,27 @@ def test_five_or_fewer_shows_all():
     assert hidden == 0
 
 
+def test_no_collapse_shows_every_match_in_line_order():
+    """"Edit each of these" needs the full list, not a representative."""
+    files = canned("basic.jsonl")
+    auth = files[by_suffix(files, "src/auth.py")]
+    shown, hidden = sgrep.select_matches(auth, cap=None, no_collapse=True)
+    assert len(shown) == auth["count"] == 9
+    assert hidden == 0
+    assert [line for line, _ in shown] == sorted(line for line, _ in shown)
+    assert sum("needle_call" in t for _, t in shown) == 7  # collapsed to 1
+
+
+def test_no_collapse_stays_bounded_by_max_tokens():
+    """--no-collapse widens the default, it does not defeat the budget."""
+    files = canned("basic.jsonl")
+    ranked = sgrep.rank(files, *default_conf())
+    lines = sgrep.apply_budget(ranked, files,
+                               _Args(max_tokens=60, no_collapse=True))
+    assert sgrep._tokens_of(lines) <= 60
+    assert any("--no-collapse capped at" in ln for ln in lines)
+
+
 def test_normalize_clusters_digit_variants():
     assert sgrep.normalize("  needle_call(12)") == sgrep.normalize(
         "needle_call(99)   ")
@@ -188,6 +210,7 @@ class _Args:
         self.max_tokens = kw.get("max_tokens", 0)
         self.counts_only = False
         self.files_only = False
+        self.no_collapse = kw.get("no_collapse", False)
 
 
 def test_budget_reduces_context_first():
@@ -374,6 +397,36 @@ def test_small_search_is_untouched_by_the_default(tmp_path):
     _, unbounded = run_bytes(["--rg", RG, "--max-tokens", "0", "needle", "."],
                              tmp_path)
     assert deflt == unbounded
+
+
+def test_context_lines_carry_no_path_prefix():
+    """Context lines are situating text, not claims, and sit under a header
+    that already names the file. Repeating the path on each one was the
+    bulk of sgrep's overhead against raw `rg` (savings_record.md: 193 of
+    297 credited calls printed more than the dump they replaced)."""
+    files = canned("context.jsonl")
+    weights, extra = default_conf()
+    ranked = sgrep.rank(files, weights, extra)
+    out = sgrep.apply_budget(ranked, files, _Args(context=1, max_tokens=0))
+    ctx = [l for l in out if re.match(r"^\s*\d+- ", l)]
+    assert ctx, "expected context lines"
+    for line in ctx:
+        assert ".py" not in line.split("- ", 1)[0], line
+
+
+def test_match_lines_still_carry_path_and_line():
+    """The other half of the trade: every line that makes a claim about
+    code stays followable with xread (INVARIANTS.md)."""
+    files = canned("context.jsonl")
+    weights, extra = default_conf()
+    ranked = sgrep.rank(files, weights, extra)
+    out = sgrep.apply_budget(ranked, files, _Args(context=1, max_tokens=0))
+    matches = [l for l in out
+               if not l.startswith(("==", "(")) and l.strip()
+               and not re.match(r"^\s*\d+- ", l)]
+    assert matches, "expected match lines"
+    for line in matches:
+        assert re.match(r"^\S+:\d+: ", line), line
 
 
 def test_reduced_context_is_announced():

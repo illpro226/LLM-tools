@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 LLM-tools is a toolkit of small, composable CLI utilities that help coding agents (Claude Code, aider, etc.) spend fewer tokens per task. The unifying idea: never put raw, bulky content into an agent's context when a compressed, targeted view will do.
 
-The suite is complete at 11 tools — `tokq`, `runlite`, `xread`, `sgrep` (Wave 1), `repomap`, `gitbrief`, `structo` (Wave 2), `repoindex`, `rq`, `testmap` (Wave 3), and `codediff` (Wave 4). The build list is closed (docs/decisions/0003): `factbook` and `docsnip` stay deferred indefinitely, revivable only on recorded dogfooding evidence. Their directories (plus `callgraph`, merged into `rq`) contain just the standard doc set (`README.md`, `PRD.md`, `ARCHITECTURE.md`, `CONVENTIONS.md`, `STATUS.md`, `ROADMAP.md`, `CHANGELOG.md`, `DECISIONS.md`, `TESTING.md`, `CONTRIBUTING.md`) and a `.gitkeep`. Check a tool's `STATUS.md` first — it says outright whether the tool is "Scaffold only" or implemented.
+The suite is complete at 11 tools — `tokq`, `runlite`, `xread`, `sgrep` (Wave 1), `repomap`, `gitbrief`, `structo` (Wave 2), `repoindex`, `rq`, `testmap` (Wave 3), and `codediff` (Wave 4). Two of them, `rq` and `testmap`, are **retired from default use** (docs/decisions/0006): a month of logged usage produced 2 calls and 0 calls respectively, so they no longer appear in the guidance below. The code and tests stay; `repoindex` stays fully live as the library behind `codediff`. The build list is closed (docs/decisions/0003): `factbook` and `docsnip` stay deferred indefinitely, revivable only on recorded dogfooding evidence. Their directories (plus `callgraph`, merged into `rq`) contain just the standard doc set (`README.md`, `PRD.md`, `ARCHITECTURE.md`, `CONVENTIONS.md`, `STATUS.md`, `ROADMAP.md`, `CHANGELOG.md`, `DECISIONS.md`, `TESTING.md`, `CONTRIBUTING.md`) and a `.gitkeep`. Check a tool's `STATUS.md` first — it says outright whether the tool is "Scaffold only" or implemented.
 
 - [`START.md`](START.md) — canonical description of every tool in the suite plus its bootstrap prompt. Read this before starting a new tool.
 - [`INVARIANTS.md`](INVARIANTS.md) — rules that hold across every tool (output, semantics, performance, docs). A change that breaks one needs a decision record in `docs/decisions/`, not just a PR.
@@ -15,7 +15,9 @@ The suite is complete at 11 tools — `tokq`, `runlite`, `xread`, `sgrep` (Wave 
   list: `callgraph` merged into `rq`) · 0002 un-defers `codediff` · 0003
   closes the list at 11 tools, no Wave 5 · 0004 accepts an MCP stdio
   adapter for xread/sgrep/structo/gitbrief (planned in `mcp/`, not built)
-  · 0005 token budgets on by default.
+  · 0005 token budgets on by default · 0006 retires `rq`/`testmap` from
+  default use on logged-usage evidence · 0007 savings-log operations
+  (no repeat-call memo; compact `events.jsonl` only past 4 MB / 50 ms).
 - `docs/README.md`, `docs/PRDs/README.md`, `docs/known-issues/README.md` —
   index pages; per-tool PRDs live at `tools/<name>/PRD.md`.
 - `doc/` is a compatibility alias for `docs/` — put new documentation in `docs/`, not `doc/`.
@@ -42,25 +44,16 @@ jobs they cover — real usage is the field test fixtures can't provide:
   a change *means* — API/behavior/removed/mechanical plus risk flags —
   before committing or when reviewing, instead of re-reading hunks.
 - `sgrep` for token-budgeted content search (`--files-only`/`--counts-only`
-  first, then narrow), instead of raw grep dumps.
+  first, then narrow), instead of raw grep dumps. Add `--no-collapse` when
+  you need every match rather than a representative per cluster — "edit
+  each of these 40 sites" work.
 
-**Situational, not default.** These four earn their keep only when their
-precondition actually holds. `savings_record.md` shows they went unused for
-the suite's first three weeks while this section told you to reach for them
-by default — a standing instruction that gets ignored teaches you to ignore
-the section, so the honest framing is the trigger, not the habit:
-
-- `repoindex` + `rq` (`whouses`, `impact`, `deadcode`, `untested`) when a
-  relationship question spans more call sites than `sgrep` can settle in
-  one pass, or when you need `resolved`-vs-`heuristic` confidence rather
-  than a match list. For a single "who calls this?", `sgrep` wins on cost.
-- `testmap [FILES]` when the suite is slow enough that narrowing beats
-  running it. The tool directories here run in seconds, so `python -m
-  pytest` is usually the cheaper answer; reach for `testmap` in a repo
-  where it isn't.
-- `tokq lint`/`tokq dir` when you're deciding what to cut from a document
-  or hunting where token weight lives — not as a finishing ritual on every
-  doc edit.
+**Situational, not default.** `tokq lint`/`tokq dir` when you're deciding
+what to cut from a document or hunting where token weight lives — not as a
+finishing ritual on every doc edit. (`rq` and `testmap` used to be listed
+here too. Logged usage says the trigger never fires: `sgrep` settles
+"who calls this?" cheaper, and these test suites run in seconds. Don't
+reach for them; see docs/decisions/0006.)
 
 Two rules make this useful rather than ritual: (1) whenever a built-in was
 genuinely easier or a tool's output missed what you needed, file it in
@@ -122,16 +115,9 @@ python -m pytest        # run tests (58 tests against tests/fixtures/repo/)
 ./repoindex.py status    # freshness + per-language file/symbol counts
 ./repoindex.py sql "SELECT ..."   # read-only escape hatch, column-aligned
 
-cd tools/rq
-python -m pytest        # run tests (42 tests; builds the repoindex fixture index)
-./rq.py whouses SYMBOL | implements IFACE | inherits BASE | impact SYMBOL [--depth N]
-./rq.py publicapi [PATH] | deadcode [--include-exported] | findcycles | untested
-#   shared flags (--root, --json, --max-tokens, --no-update) work before or after the subcommand
-
-cd tools/testmap
-python -m pytest        # run tests (23 tests; record test needs coverage.py, else skips)
-./testmap.py [FILES...] [--depth N]   # changed files -> covering tests + run command
-./testmap.py record -- pytest [ARGS]  # record exact coverage into the shared index
+# tools/rq and tools/testmap are retired from default use (0006). Still
+# implemented and tested (`python -m pytest` in either dir); read their
+# STATUS.md before changing them, don't reach for them mid-task.
 
 cd tools/codediff
 python -m pytest        # run tests (38 tests; scripted temp repos, needs git + sibling repoindex)
@@ -159,8 +145,6 @@ here. What bites you if you don't know it:
 | `gitbrief` | read-only git plumbing; renames off, `--no-optional-locks`. Git discovery stops at `$HOME` so a run outside a project can't adopt a dotfiles repo and scan your home tree (`GITBRIEF_NO_CEILING=1` overrides). |
 | `structo` | streams everything (memory O(schema+samples)). `--select`/`--raw` **refuse rather than truncate** when over an explicit budget — they feed `awk`/`sort`, not context. A leading `[N]` in `--path` picks JSONL record N. |
 | `repoindex` | `extract()` is pure and filesystem-free (`codediff` reuses it on git blobs). Every ref is tagged `resolved` or `heuristic`, never dropped. `update` is incremental and preserves `testmap record` coverage rows. |
-| `rq` | queries the index and never parses source — a data gap is a repoindex bug. Runs `repoindex update` first (`--no-update` to skip). Exit 1 symbol not found, 2 no index. |
-| `testmap` | never parses source; `--root` must be the work-tree top. `record` is pytest-only. Exit 1 changed files undeterminable, 2 no index. |
 | `codediff` | there is no `--llm` flag — `--json` **is** the narrator payload. Risk is a flat list of explainable flags, never a grade (0002). Same `$HOME` git ceiling as `gitbrief` (`CODEDIFF_NO_CEILING=1`). Exit 0 ok, 2 usage/git error. |
 
 For any other tool, there is nothing to run yet — start from that tool's `PRD.md` and the corresponding bootstrap prompt in `START.md`, and follow the suite-wide conventions above plus `INVARIANTS.md`.

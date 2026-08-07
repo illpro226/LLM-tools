@@ -10,10 +10,12 @@ file:line references — instead of thousands of lines of passing noise.
     runlite --full-log build.log -- make test
 
 Extractors are pure functions over the captured text (pytest, jest/vitest,
-go test, cargo, tsc, eslint, gcc/clang, plus a generic fallback), chosen by
-command name first, then log fingerprint. runlite exits with the wrapped
-command's exit code; its own failures use the reserved codes 125 (internal)
-and 127 (command not found).
+go test, cargo, tsc, eslint, gcc/clang, next build, plus a generic
+fallback), chosen by command name first, then log fingerprint. A run that
+exited 0 never reports failure-shaped findings: the exit code is the
+reliable signal and a contradicted finding is an extractor misfire.
+runlite exits with the wrapped command's exit code; its own failures use
+the reserved codes 125 (internal) and 127 (command not found).
 """
 
 import argparse
@@ -24,7 +26,7 @@ import subprocess
 import sys
 import time
 
-__version__ = "0.1.3"
+__version__ = "0.3.0"
 
 EXIT_INTERNAL = 125   # runlite's own failure, never the wrapped command's
 EXIT_NOT_FOUND = 127
@@ -281,6 +283,49 @@ def parse_jstest(log):
     return problems, []
 
 
+# A `next build` reports errors with these markers; everything else it
+# prints on the way to exit 0 — including the route-type legend — is noise.
+_NEXT_ERR = re.compile(
+    r"^\s*(?:⨯|Failed to compile\.|Type error:|Error:|SyntaxError:|"
+    r"Module not found:|Build error occurred)")
+NEXT_DETAIL_LINES = 8
+
+
+def parse_next_build(log):
+    """Next.js build: only real compile/type errors count as problems.
+
+    Every successful `next build` ends with a route-type legend whose `●`
+    and `ƒ` glyphs read as jest bullets, so the jest/vitest extractor
+    claimed the log by fingerprint and rewrote the legend to `FAIL` — a
+    green build reporting a failure (known-issue
+    archive/runlite-next-build-legend-read-as-failure). Finding nothing here
+    returns no tail either, so a failing build still falls through to the
+    generic extractor rather than being reported as clean.
+    """
+    lines = log.splitlines()
+    problems = []
+    i = 0
+    while i < len(lines):
+        if _NEXT_ERR.match(lines[i]):
+            body = []
+            j = i + 1
+            while (j < len(lines) and len(body) < NEXT_DETAIL_LINES
+                   and lines[j].strip()):
+                body.append(lines[j].rstrip())
+                j += 1
+            m = FILE_LINE.search("\n".join([lines[i]] + body))
+            if not m and i:
+                # `Type error:` carries no path — Next.js prints the
+                # offending `./path:line:col` on the line just above it.
+                m = FILE_LINE.search(lines[i - 1])
+            problems.append(_problem(lines[i].strip(),
+                                     m.group(0) if m else "", _trim(body)))
+            i = j
+            continue
+        i += 1
+    return problems, (lines[-TAIL_LINES:] if problems else [])
+
+
 _ERRORISH = re.compile(
     r"error|fail|fatal|exception|traceback|panic|assert|warning", re.I)
 
@@ -325,6 +370,12 @@ EXTRACTORS = [
     Extractor("eslint", parse_eslint,
               r"^[✖x] \d+ problems?|^\s+\d+:\d+\s+(error|warning)\s{2}",
               cmds=("eslint",)),
+    # Before jest/vitest: `next build` output trips that extractor's bullet
+    # fingerprint, and first match wins.
+    Extractor("next build", parse_next_build,
+              r"^\s*(?:▲ Next\.js|Creating an optimized production build)"
+              r"|^Route \(app\)|^Route \(pages\)|prerendered as static HTML",
+              cmd_match=lambda t: "next" in t and "build" in t),
     Extractor("jest/vitest", parse_jstest,
               r"^Test Suites: |^\s*● |^ FAIL  |^\s*Test Files\s+\d",
               cmds=("jest", "vitest")),
@@ -372,7 +423,21 @@ def _block(p):
     return [_one_line(p)] + ["  " + d for d in p["detail"]]
 
 
-def render(exit_code, wall, ext_name, problems, tail, max_tokens, log_path):
+# How every extractor labels a test that failed. On a run that exited 0 no
+# test failed, so such a finding is an extractor misfire by construction.
+_FAILURE_TITLE = re.compile(r"^FAIL(?:ED)?\b")
+
+
+def render(exit_code, wall, ext_name, problems, tail, max_tokens, log_path,
+           log_bytes=None):
+    dropped = 0
+    if exit_code == 0:
+        # The exit code is the reliable signal; a "1 problem / FAIL" body
+        # under an `exit 0` headline is read as the detail and reported to
+        # the user as a failing build.
+        kept = [p for p in problems if not _FAILURE_TITLE.match(p["title"])]
+        dropped = len(problems) - len(kept)
+        problems = kept
     n = len(problems)
     if n:
         count = "%d problem%s" % (n, "s"[: n != 1])
@@ -380,8 +445,20 @@ def render(exit_code, wall, ext_name, problems, tail, max_tokens, log_path):
         count = "no problems"
     else:  # a failing run with nothing parsed must not read as a pass
         count = "no findings (see log tail)" if tail else "no findings"
-    header = ["# runlite: exit %d in %.2fs (%s) %s"
-              % (exit_code, wall, ext_name, count)]
+    # The size of the log this report stands in for. runlite already holds
+    # the whole thing in memory, so this is exact, not an estimate - the
+    # only baseline in the suite that is. It tells the caller how much they
+    # are *not* reading (a 400 KB log summarized to four lines is a
+    # different claim than a 900 B one), and it lets the savings hook credit
+    # runlite without re-running the build to measure it.
+    size = " [log %d B]" % log_bytes if log_bytes is not None else ""
+    header = ["# runlite: exit %d in %.2fs (%s) %s%s"
+              % (exit_code, wall, ext_name, count, size)]
+    if dropped:
+        header.append("# note: dropped %d failure-shaped finding%s — the run "
+                      "exited 0, so nothing failed (the %s extractor matched "
+                      "output it does not own)"
+                      % (dropped, "s"[: dropped != 1], ext_name))
     if log_path:
         header.append("# raw log: %s" % log_path)
 
@@ -505,7 +582,7 @@ def main(argv=None):
         # test framework itself is missing); never report less than the log.
         problems, tail = parse_generic(log)
     lines = render(proc.returncode, wall, ext.name, problems, tail,
-                   args.max_tokens, args.full_log)
+                   args.max_tokens, args.full_log, len(raw))
     try:  # tool logs carry symbols (✕, ●, ⎯) a cp1252 console default would eat
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):

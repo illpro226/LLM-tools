@@ -20,14 +20,22 @@ runlite --full-log PATH -- CMD...      # also save the raw log, print its path
 ```
 
 Built-in extractors: pytest, jest/vitest, go test, cargo, tsc, eslint,
-gcc/clang. Unknown tools get the generic fallback: lines matching
-error/warning/fail patterns plus the last 20 lines of output.
+gcc/clang, next build. Unknown tools get the generic fallback: lines
+matching error/warning/fail patterns plus the last 20 lines of output.
+
+A run that exited 0 never reports failure-shaped findings — the exit code
+is the reliable signal, and the report says which extractor misfired
+rather than dropping them silently.
+
+The header's `[log N B]` is the exact size of the log the report replaced,
+so you can tell a summary of 400 KB from a summary of 900 B. Use
+`--full-log PATH` when you want the bytes themselves.
 
 ### Example
 
 ```
 $ runlite -- pytest -q
-# runlite: exit 1 in 0.74s (pytest) 2 problems
+# runlite: exit 1 in 0.74s (pytest) 2 problems [log 41208 B]
 
 FAIL test_add  test_demo.py:5
       def test_add():

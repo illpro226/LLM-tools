@@ -26,18 +26,16 @@ path or run `python tools/<name>/<name>.py` from this repo.
 | `cat` on JSON/YAML/JSONL/XML/CSV/logs | `structo` | `structo data.json --path items[0]` |
 | Raw `git diff` / `git log` / `git status` | `gitbrief` | `gitbrief`, `gitbrief hunks`, `gitbrief show FILE`, `gitbrief log`, `gitbrief pr main` |
 | Re-reading hunks to judge what a change means | `codediff` | `codediff --staged` (API/behavior/removed/mechanical + risk flags) |
-| Grepping for call sites and relationships | `rq` (auto-refreshes the index) | `rq whouses LoginManager`, `rq impact save_user`, `rq deadcode`, `rq untested`, `rq publicapi src` |
-| Running the whole test suite after a small change | `testmap` | `testmap` (changed files → covering tests + run command); `testmap record -- pytest` for exact coverage |
+| Grepping for call sites and relationships | `sgrep` | `sgrep "LoginManager" --counts-only`, then narrow |
 | Guessing what is cheap or expensive to read | `tokq` | `tokq FILE`, `tokq dir .`, `tokq lint docs\` |
 
 Shared behavior you can rely on: output is plain, deterministic text
 meant to be read by an LLM; every claim line carries a `path:line` you
 can follow up with `xread`; every tool accepts `--max-tokens N` and
-degrades by summarizing harder, never truncating mid-thought. `rq`,
-`testmap`, and `codediff` query the shared `.repoindex/index.db` and run
-`repoindex update` automatically first (`repoindex build` once in a new
-repo; `rq`/`testmap` exit 2 when no index exists and repoindex is
-unavailable). Confidence in index-backed answers is two-valued —
+degrades by summarizing harder, never truncating mid-thought. `codediff`
+queries the shared `.repoindex/index.db` and runs `repoindex update`
+automatically first (`repoindex build` once in a new repo).
+Confidence in index-backed answers is two-valued —
 `resolved` or `heuristic` — treat heuristic edges as leads, not facts.
 Caveats: `sgrep` errors clearly if `rg` is absent; `tokq` falls back to
 a bytes-based estimate without `tiktoken` and says so.

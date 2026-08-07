@@ -119,6 +119,13 @@ def test_detect_generic_fallback():
     assert runlite.detect(["make"], log("mixed_unknown.log")).name == "generic"
 
 
+def test_next_build_wins_over_jest_bullet_fingerprint():
+    """`next build`'s route legend uses ● — jest's failure marker."""
+    assert runlite.detect(["npm", "run", "build"],
+                          log("next_build_pass.log")).name == "next build"
+    assert runlite.detect(["npx", "next", "build"], "").name == "next build"
+
+
 # ---------------------------------------------------------------- extractors
 
 def test_pytest_failures():
@@ -227,7 +234,36 @@ def test_generic_keeps_errorish_and_tail():
     assert "Step 2/8" not in "\n".join(lines)
 
 
+def test_next_build_pass_reports_nothing():
+    """A green build must not report the route legend as a failure."""
+    problems, tail = parse("next build", "next_build_pass.log")
+    assert (problems, tail) == ([], [])
+    lines = runlite.render(0, 26.13, "next build", problems, tail, 0, "")
+    assert lines == ["# runlite: exit 0 in 26.13s (next build) no problems"]
+
+
+def test_next_build_failure_keeps_the_type_error():
+    problems, tail = parse("next build", "next_build_fail.log")
+    titles = [p["title"] for p in problems]
+    assert "Failed to compile." in titles
+    err = next(p for p in problems if p["title"].startswith("Type error:"))
+    assert err["ref"].endswith("src/lib/related.ts:42")
+    assert tail  # a failing build still carries its trailing lines
+
+
 # ----------------------------------------------------------------- rendering
+
+def test_exit_zero_drops_failure_shaped_findings():
+    """The exit code is the reliable signal; a FAIL under `exit 0` is a
+    misfire, and reads to a user as 'the build is failing'."""
+    problems = [runlite._problem("FAIL (SSG)", "", ["detail"]),
+                runlite._problem("warning: unused import", "src/a.ts:3")]
+    lines = runlite.render(0, 26.13, "jest/vitest", problems, [], 0, "")
+    assert "FAIL" not in "\n".join(lines)
+    assert "warning: unused import  src/a.ts:3" in lines
+    assert "1 problem" in lines[0]
+    assert lines[1].startswith("# note: dropped 1 failure-shaped finding")
+
 
 def test_failing_exit_never_reads_as_pass():
     lines = runlite.render(1, 0.02, "pytest", [], [], 0, "")
@@ -270,6 +306,24 @@ def test_full_log_byte_exact(tmp_path, capsys):
                         sys.executable, "-c", prog], capsys)
     assert dest.read_bytes() == b"alpha\nbeta\n"
     assert "# raw log: %s" % dest in out
+
+
+def test_header_reports_the_suppressed_log_size(capsys):
+    """The report stands in for a log the caller never sees; say how big it
+    was. runlite holds the whole log already, so the figure is exact - and
+    it is the only honest baseline the savings hook can get for a build it
+    must not re-run."""
+    prog = r"import sys; sys.stdout.write('x' * 5000)"
+    _, out, _ = run(["--", sys.executable, "-c", prog], capsys)
+    assert "[log 5000 B]" in out.splitlines()[0]
+
+
+def test_log_size_omitted_when_not_measured():
+    """render() is called directly by tests and by nothing else; an absent
+    measurement must not print as `[log 0 B]`, which would read as an empty
+    log rather than an unmeasured one."""
+    lines = runlite.render(0, 0.31, "pytest", [], [], 0, "")
+    assert lines == ["# runlite: exit 0 in 0.31s (pytest) no problems"]
 
 
 def test_end_to_end_fingerprint_detection(capsys):

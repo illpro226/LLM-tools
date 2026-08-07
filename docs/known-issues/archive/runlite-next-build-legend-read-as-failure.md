@@ -1,8 +1,15 @@
 # runlite: Next.js build legend reported as a test failure
 
+**RESOLVED 2026-08-06 (runlite v0.2.0)** — both of the first two fix
+suggestions shipped. `render` now drops `FAIL`-titled problems on a zero exit
+and names the extractor that produced them, so the headline and the body can
+no longer contradict each other; and a `next build` extractor claims Next.js
+logs ahead of jest/vitest, reporting only real `Failed to compile.` /
+`Type error:` blocks. Verified against a green fixture (`exit 0 … no
+problems`) and a real failing `npm run build`.
+
 **Date:** 2026-08-02
 **Tool:** runlite
-**Status:** Open
 
 ## What I tried
 

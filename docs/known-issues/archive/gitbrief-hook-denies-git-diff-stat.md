@@ -1,8 +1,16 @@
 # gitbrief hook: denies `git diff --stat` / `--numstat`
 
+**FIXED 2026-08-06** — the narrow fix landed in
+`~/.claude/hooks/llm-tools-guard.py`: `git diff` is allowed when its own
+arguments carry a summary-only format (`--stat`, `--numstat`, `--shortstat`,
+`--dirstat`, `--name-only`, `--name-status`) and nothing re-enables patch
+output (`-p`, `-U`, `--patch-with-stat`, …). Fixing it surfaced a second
+hole and closed that too: the check used `GIT_RE.search`, so only the *first*
+`git diff|log|grep` in a chain was examined — `git log -1 && git diff` was
+allowed. It now iterates every occurrence.
+
 **Date:** 2026-08-02
 **Tool:** gitbrief PreToolUse hook
-**Status:** Open
 
 ## What I tried
 

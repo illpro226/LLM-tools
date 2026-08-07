@@ -9,6 +9,7 @@ and hard-caps total output.
     sgrep PATTERN [PATH...]         condensed, ranked digest
     sgrep PATTERN --files-only      matching file list only
     sgrep PATTERN --counts-only     file list with match counts
+    sgrep PATTERN --no-collapse     every match line, not one per cluster
     sgrep PATTERN --max-tokens N    reduce: context, then matches per
                                     file, then files shown, in that order
 
@@ -24,7 +25,7 @@ import re
 import subprocess
 import sys
 
-__version__ = "0.2.0"
+__version__ = "0.4.0"
 
 SHOW_ALL_LIMIT = 5    # files with <= this many matching lines show them all
 REPRESENTATIVES = 3   # distinct lines shown when a file exceeds the limit
@@ -163,19 +164,22 @@ def normalize(text):
     return re.sub(r"\d+", "0", " ".join(text.split()))
 
 
-def select_matches(entry, cap):
+def select_matches(entry, cap, no_collapse=False):
     """Pick the shown matches for one file.
 
     Files at or under SHOW_ALL_LIMIT show every match; above it, one
     representative per normalized-content cluster (largest clusters first),
     REPRESENTATIVES at most. `cap` tightens either path under --max-tokens.
+    `no_collapse` skips the clustering step: every match is a candidate, in
+    line order, for the times the task is "edit each one of these" and a
+    representative is the wrong answer.
     Returns (shown [(line, text)] in line order, hidden count).
     """
     count = entry["count"]
-    limit = count if count <= SHOW_ALL_LIMIT else REPRESENTATIVES
+    limit = count if (no_collapse or count <= SHOW_ALL_LIMIT) else REPRESENTATIVES
     if cap is not None:
         limit = min(limit, cap)
-    if count <= SHOW_ALL_LIMIT:
+    if no_collapse or count <= SHOW_ALL_LIMIT:
         shown = entry["matches"][:limit]
     else:
         clusters = {}
@@ -204,7 +208,8 @@ def _context_lines(entry, shown, radius):
     return ctx
 
 
-def render(ranked, files, ctx_radius, cap, nfiles, counts_only, files_only):
+def render(ranked, files, ctx_radius, cap, nfiles, counts_only, files_only,
+           no_collapse=False):
     kept = ranked[:nfiles]
     if files_only:
         return list(kept)
@@ -223,17 +228,29 @@ def render(ranked, files, ctx_radius, cap, nfiles, counts_only, files_only):
             out.append("")
         n = entry["count"]
         out.append("== %s (%d match%s) ==" % (path, n, "es"[: 2 * (n != 1)]))
-        shown, hidden = select_matches(entry, cap)
+        shown, hidden = select_matches(entry, cap, no_collapse)
         ctx = _context_lines(entry, shown, ctx_radius) if ctx_radius else {}
         match_lines = {line for line, _ in shown}
+        # Right-align context line numbers under the widest one in the
+        # block so the gutter stays a readable column, not a ragged edge.
+        lineno_width = max((len(str(l)) for l in ctx), default=1)
         for line in sorted(match_lines | set(ctx)):
             if line in match_lines:
                 text = dict(shown)[line]
                 out.append("%s:%d: %s" % (path, line, text))
             else:
-                out.append("%s:%d- %s" % (path, line, ctx[line]))
+                # Context lines make no claim of their own - they exist to
+                # situate the match above them, inside a block whose header
+                # already names the file. Repeating the path on each one
+                # cost more than it bought: measured against raw `rg`, the
+                # prefix was most of sgrep's per-line overhead and the
+                # reason narrow -C searches printed *more* than the dump
+                # they replaced. Match lines keep the full path:line, so
+                # every claim line is still followable with xread.
+                out.append("%*d- %s" % (lineno_width, line, ctx[line]))
         if hidden:
-            out.append("(+%d more similar)" % hidden)
+            out.append("(+%d more)" % hidden if no_collapse
+                       else "(+%d more similar)" % hidden)
     if len(ranked) > len(kept):
         dropped = ranked[len(kept):]
         out.append("")
@@ -253,6 +270,10 @@ def apply_budget(ranked, files, args):
         asked for. Without this, dropped context reads as absent context:
         the caller concludes the surrounding lines don't exist rather than
         that they were trimmed, and never thinks to raise the cap."""
+        if args.no_collapse and cap is not None:
+            lines = ["(--no-collapse capped at %d matches/file for "
+                     "--max-tokens %d — raise it or 0 for the full list)"
+                     % (cap, args.max_tokens)] + lines
         if ctx < args.context:
             return ["(context reduced %d -> %d for --max-tokens %d)"
                     % (args.context, ctx, args.max_tokens)] + lines
@@ -260,7 +281,7 @@ def apply_budget(ranked, files, args):
 
     while True:
         lines = render(ranked, files, ctx, cap, nfiles, counts_only,
-                       args.files_only)
+                       args.files_only, args.no_collapse)
         if not args.max_tokens:
             return lines
         if _tokens_of(note(lines)) <= args.max_tokens:
@@ -326,6 +347,11 @@ def main(argv=None):
                         help="ranked matching-file list only")
     parser.add_argument("--counts-only", action="store_true",
                         help="ranked file list with match counts")
+    parser.add_argument("--no-collapse", action="store_true",
+                        help="show every match line instead of one "
+                             "representative per near-identical cluster; "
+                             "for \"edit each of these\" work. Still bounded "
+                             "by --max-tokens")
     parser.add_argument("--max-tokens", type=int, metavar="N",
                         default=DEFAULT_MAX_TOKENS,
                         help="cap output; reduces context, then matches per "

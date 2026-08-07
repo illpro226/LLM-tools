@@ -1,5 +1,26 @@
 # sgrep Changelog
 
+- 2026-08-06: v0.4.0 — `-C` context lines no longer repeat the file path.
+  They print as `  248-  text` under the `== path (N matches) ==` header
+  that already names the file; match lines keep the full `path:line:` and
+  stay followable with `xread`. This was not cosmetic. `savings_record.md`
+  measured **193 of 297 credited calls printing more than the raw `rg`
+  they replaced** — sgrep's one near-break-even tool despite being the
+  most-called. The repeated prefix was the cause: with `-C 3` there are
+  roughly six context lines per match, each paying the full path again,
+  while `rg` on a single file prints no path at all. Measured on four
+  representative searches, output fell 19,732 → 15,174 bytes (-23%) and
+  a `-C 3` search that had been 573 bytes *worse* than `rg` became 1,752
+  bytes better. 2 new tests (32 total), one pinning the saving and one
+  pinning the invariant it must not break. INVARIANTS.md updated.
+- 2026-08-06: v0.3.0 — `--no-collapse` shows every match line instead of one
+  representative per near-identical cluster. Collapsing is right for
+  orientation and wrong when the task is "edit each one of these 40 sites";
+  without a way off it, the only complete list came from `cat FILE | grep`,
+  which the guard hook denies. The flag widens the default, it does not
+  defeat the budget: `--max-tokens` still caps matches per file, and says so
+  (`(--no-collapse capped at N matches/file …)`). 2 new tests (30 total).
+  Closes docs/known-issues/archive/guard-hook-cat-pipe-grep-inconsistent.md.
 - 2026-07-31: v0.2.0 — `--max-tokens` now defaults to 1500 instead of unbounded
   (ADR-005, docs/decisions/0005-budgets-on-by-default.md); `--max-tokens 0`
   restores the old behaviour. Context reduction is announced

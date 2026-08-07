@@ -1,0 +1,24 @@
+> bible-atlas@0.1.0 build
+> next build
+
+   ▲ Next.js 15.1.6
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully
+   Linting and checking validity of types ...
+   Collecting page data ...
+   Generating static pages (0/34) ...
+   Generating static pages (34/34)
+   Finalizing page optimization ...
+
+Route (app)                                Size     First Load JS
+┌ ○ /                                      1.83 kB         112 kB
+├ ○ /_not-found                              142 B         106 kB
+├ ● /person/[slug]                          4.1 kB         141 kB
+├ ƒ /api/search                              142 B         106 kB
+└ ○ /timeline                               2.4 kB         118 kB
++ First Load JS shared by all               106 kB
+
+○  (Static)   prerendered as static content
+●  (SSG)      prerendered as static HTML (uses generateStaticParams)
+ƒ  (Dynamic)  server-rendered on demand

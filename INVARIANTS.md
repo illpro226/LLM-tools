@@ -8,7 +8,12 @@ decision record in `docs/decisions/`, not just a PR.
 - Plain text, deterministic, stable ordering. No ANSI, no spinners, no
   timestamps in normal output.
 - Every line that makes a claim about code carries a `path:line` reference,
-  so any finding can be followed up with `xread`.
+  so any finding can be followed up with `xread`. Lines that make no claim
+  — `sgrep`'s `-C` context lines, which exist only to situate the match
+  above them inside a block whose header already names the file — carry a
+  bare line number instead. Repeating the path there is not rigor, it is
+  the overhead that made narrow `sgrep -C` searches print more than the
+  raw dump they replaced.
 - Every tool whose output can grow respects `--max-tokens N`, degrading by
   summarizing harder — never by truncating mid-thought.
 - **The budget is on by default, and every rung is bounded**
