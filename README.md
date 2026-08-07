@@ -84,6 +84,9 @@ of raw `cat`/`grep`/`git diff`.
 
 - `tools/<name>/` — one directory per tool, each with its own `README.md`,
   `STATUS.md`, `CHANGELOG.md`, tests, and design docs
+- `archive/<name>/` — tools retired from default use and archived
+  (currently `rq`, `testmap`); code and tests kept, not installed or on
+  PATH — see [`docs/decisions/0009`](docs/decisions/0009-archive-rq-testmap.md)
 - `bin/` — PATH shims
 - `docs/` — cross-tool documentation: [`docs/decisions/`](docs/decisions/)
   (binding architecture/scope decisions), [`docs/PRDs/`](docs/PRDs/),
