@@ -1,18 +1,20 @@
 # structo Status
 
-Implemented (v0.5.0) and passing tests.
+Implemented (v0.6.0) and passing tests.
 
 - `structo.py` — single-file CLI printing the schema and shape of a data
   file instead of its content. Formats: JSON, JSONL, YAML (via PyYAML —
-  the one optional dependency, with a clear error if absent), CSV, TSV,
-  XML, generic log. Detection by extension, else content sniffing; the
-  header states which.
+  the one optional dependency, with a clear error if absent), TOML, CSV,
+  TSV, XML, generic log. Detection by extension, else content sniffing;
+  the header states which.
 - Streaming throughout (ADR-001): JSON via an incremental event tokenizer
   (no `json.load` on whole files), JSONL per record, YAML via the PyYAML
   event API, CSV per row, logs per line, XML via `iterparse` with element
-  clearing. Memory is O(schema + samples) — test-enforced with
+  clearing. TOML is the single exception (ADR-008): `tomllib` has no
+  event API, so the document is parsed whole — config-sized by
+  construction. Memory is O(schema + samples) — test-enforced with
   tracemalloc on a generated ~25 MB JSONL (peak < 15 MB asserted).
-- JSON/YAML/JSONL: merged schema with types, optionality percentages
+- JSON/YAML/JSONL/TOML: merged schema with types, optionality percentages
   (key presence / parent object instances), array length stats (always
   exact); array *elements* beyond `--sample N` (default 10) are not
   aggregated and the line carries a `~` marker (ADR-003 — sampling is
@@ -23,7 +25,7 @@ Implemented (v0.5.0) and passing tests.
 - Logs: timestamp format (iso-8601/syslog/clf/epoch), exact line count,
   top message templates (numbers/hex/uuids/quoted strings normalized,
   bounded table), first/last lines with `path:line` refs.
-- `--path a.b[0].c` zooms into a JSON/YAML subtree (per record for
+- `--path a.b[0].c` zooms into a JSON/YAML/TOML subtree (per record for
   JSONL; a leading `[N]` picks JSONL record N instead — ADR-004);
   unmatched paths and out-of-range records exit 2. `[-1]` is the last
   record (ring buffer of the trailing |N|, so streaming holds); a negative

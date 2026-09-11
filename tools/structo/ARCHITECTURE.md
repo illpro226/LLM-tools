@@ -19,14 +19,19 @@ model ──► render(level)*  ──► fit(levels, budget) picks the report
 
 - **Format detector** (`detect`) — extension hint, else content sniffing
   on the first 8 KB (XML `<`, JSON vs JSONL by parsing the first two
-  lines, delimiter-count consistency for CSV/TSV, `key:` / `---` for
+  lines, delimiter-count consistency for CSV/TSV, a `[table]` header or
+  `key = <toml value>` on the first meaningful line for TOML (checked
+  before JSON, which the `[` would otherwise claim), `key:` / `---` for
   YAML, log fallback; binary input is an error). The header names which
-  path decided.
-- **One event vocabulary for JSON/JSONL/YAML** — `("{",) ("}",) ("[",)
+  path decided. A *sniffed* TOML file that `tomllib` rejects falls back
+  to the log summary; an explicit `.toml` reports the parse error
+  (ADR-008).
+- **One event vocabulary for JSON/JSONL/YAML/TOML** — `("{",) ("}",) ("[",)
   ("]",) ("key", k) ("scalar", type, text)` produced by three sources:
   an incremental chunk-fed JSON tokenizer (`json_events`), synthetic
-  events from per-line `json.loads` records (`value_events`), and the
-  PyYAML event API (`yaml_events`).
+  events from an already-parsed value (`value_events` — per-line
+  `json.loads` records, or the whole TOML document from `toml_value`),
+  and the PyYAML event API (`yaml_events`).
 - **Schema driver** (`Shape`) — consumes events against a merged schema:
   key → {type counts, presence count}, arrays → exact length stats with
   only the first `--sample N` elements schema-merged (`sampled ~` flag),

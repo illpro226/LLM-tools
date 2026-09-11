@@ -118,3 +118,36 @@ the first 18 days of use, 1.4%% passed `--max-tokens`, while 3%% of calls
 produced 8%% of all output. An opt-in cap protects only the caller who
 already suspected the output would be large — the one who did not need
 protecting.
+
+## ADR-008: TOML is supported, and is the one format parsed whole — Accepted (2026-08-22)
+
+Context: `structo pyproject.toml` reported `format: json (sniffed)` and
+emitted character soup — the sniffer saw a leading `[` (a `[table]` header)
+and handed the file to the JSON tokenizer, which is lenient enough to
+produce a confident-looking shape from nonsense
+(`docs/known-issues/structo-toml-sniffed-as-json.md`). TOML is the config
+format an agent meets most often (`pyproject.toml`, `Cargo.toml`,
+`ruff.toml`), so "unsupported" was never the right answer either.
+
+Decision: TOML is a first-class format — `.toml` by extension, or sniffed
+from the first meaningful line (a `[table]`/`[[array]]` header, or a
+`key = <toml value>`). It is parsed with `tomllib` (stdlib since 3.11,
+`tomli` accepted as a fallback) and fed through `value_events`, so it
+shares the schema driver, `--path`, `--raw` and `--select` with JSON/YAML.
+TOML dates keep their own scalar type (`datetime`), rather than being
+flattened to `str`.
+
+Consequences, and the invariant this bends: `tomllib` has no event API, so
+the document is parsed whole — the single exception to ADR-001. It is a
+narrow one: TOML is a config format by design, files are kilobytes, and
+there is no streaming TOML parser in the stdlib to switch to. The
+alternative — no TOML support — leaves the sniffer's garbage output in
+place, which is worse than a bounded memory cost on files that are small
+by construction.
+
+Also decided: sniff failures back off, extension failures do not. A file
+*sniffed* as TOML that `tomllib` rejects (ini/conf files share the
+`[section]` opener) falls back to the generic log summary, because a sniff
+is a guess. A file named `.toml` that fails to parse exits 2 with the
+parse error — silently producing confident-looking garbage is the bug this
+ADR closes, and guessing twice would reintroduce it.

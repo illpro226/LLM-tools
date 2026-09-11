@@ -10,7 +10,7 @@ Nine tools are live: `tokq`, `runlite`, `xread`, `sgrep`, `repomap`, `gitbrief`,
 
 The build list is closed (0003): no Wave 5, and `factbook`/`docsnip` are deferred indefinitely, revivable only on recorded dogfooding evidence. A tool's `STATUS.md` is the authority on its current state.
 
-- [`START.md`](START.md) — canonical description of every tool in the suite plus its bootstrap prompt. Read this before starting a new tool.
+- [`START.md`](START.md) — the original build brief: each tool's intent plus the bootstrap prompt it was built from. Historical (it carries its own banner saying so), not the current shape of the suite.
 - [`INVARIANTS.md`](INVARIANTS.md) — rules that hold across every tool (output, semantics, performance, docs). A change that breaks one needs a decision record in `docs/decisions/`, not just a PR.
 - `docs/decisions/` — the binding record; read one before changing what it
   settled. The ones that constrain current work: **0003** closes the build
@@ -19,43 +19,29 @@ The build list is closed (0003): no Wave 5, and `factbook`/`docsnip` are deferre
   50 ms) · **0004** accepts an MCP stdio adapter for
   xread/sgrep/structo/gitbrief (planned in `mcp/`, not built). 0001, 0002,
   0006, 0008 and 0009 record how the suite got here; read them for
-  rationale, not rules. START.md's 14-tool list is superseded by 0001.
+  rationale, not rules.
 - `docs/README.md`, `docs/PRDs/README.md`, `docs/known-issues/README.md` —
   index pages; per-tool PRDs live at `tools/<name>/PRD.md`.
 - `doc/` is a compatibility alias for `docs/` — put new documentation in `docs/`, not `doc/`. Doc links are repo-relative; keep them that way.
 
 ## Dogfood the suite while working here
 
-When working in this repo, prefer the suite's own tools over built-ins for the
-jobs they cover — real usage is the field test fixtures can't provide:
+The global CLAUDE.md already says to prefer the suite everywhere. Here it is
+also the field test fixtures can't provide, so the bar is higher — and these
+non-obvious uses are the ones that get missed:
 
-- `xread FILE --symbol NAME` instead of reading a whole file for one function;
-  `--query` for docs. `--headings` outlines one file — markdown headings, or
-  a code file's symbols with their spans — and is the cheap first move on an
-  unfamiliar file, since `--symbol` needs a name you don't have yet.
-- `repomap` for orientation after a compaction or when entering an unfamiliar
-  part of the repo, instead of `ls` + reading CLAUDE.md sections.
-- `structo` for any JSON/YAML/JSONL/XML you'd otherwise read raw; when the
-  question is about *values* across records rather than shape, `structo
-  FILE --select f1,f2 | awk ...` instead of a throwaway analysis script.
-- `runlite trace FILE` (or piped) whenever a stack trace turns up in a log,
-  in CI output, or in something the user pasted — anywhere you did not run
-  the command yourself. Reading a raw traceback is the thing it replaces.
-- `runlite -- CMD` when wrapping a build/test command whose full log you don't
-  need.
-- `gitbrief` (`hunks`, `log`, `pr BASE`) for layered views of the working
-  diff and history, instead of raw `git diff`/`git log`.
-- `codediff` (default worktree vs HEAD; `--staged`, `REF`, `A..B`) for what
-  a change *means* — API/behavior/removed/mechanical plus risk flags —
-  before committing or when reviewing, instead of re-reading hunks.
-- `sgrep` for token-budgeted content search (`--files-only`/`--counts-only`
-  first, then narrow), instead of raw grep dumps. Add `--no-collapse` when
-  you need every match rather than a representative per cluster — "edit
-  each of these 40 sites" work.
-
-**Situational, not default.** `tokq lint`/`tokq dir` when you're deciding
-what to cut from a document or hunting where token weight lives — not as a
-finishing ritual on every doc edit.
+- `xread --headings` is the cheap first move on an unfamiliar file (`--symbol`
+  needs a name you don't have yet).
+- `repomap` for orientation after a compaction, instead of `ls` + reading
+  CLAUDE.md sections.
+- `structo FILE --select f1,f2 | awk ...` when the question is about *values*
+  across records rather than shape — instead of a throwaway analysis script.
+- `runlite trace FILE` (or piped) for any stack trace you did not produce
+  yourself: a log, CI output, something the user pasted.
+- `sgrep --no-collapse` when you need every match rather than a representative
+  per cluster — "edit each of these 40 sites" work.
+- `tokq lint`/`tokq dir` is situational: deciding what to cut from a document
+  or hunting where token weight lives, not a ritual on every doc edit.
 
 Whenever a built-in was genuinely easier or a tool's output missed what you
 needed, file it in `docs/known-issues/` (one file per issue). That friction
@@ -87,11 +73,9 @@ Test-suite quirks worth knowing before you run one:
 | `structo` | `-m "not slow"` skips the memory test. |
 
 All are stdlib-only Python, single-file except `repoindex` (a package).
-Shared behaviour: stdout **and stderr** pinned to UTF-8 at entry; offline
-and deterministic; `--max-tokens` on by default (`sgrep` 1500,
-`xread`/`structo`/`gitbrief` 2000, `repomap`/`codediff` 3000; `0` =
-unbounded; `structo --select`/`--raw` and `codediff --json` exempt from the
-default, not from an explicit cap).
+Shared behaviour: stdout **and stderr** pinned to UTF-8 at entry; offline and
+deterministic. Default `--max-tokens` per the conventions above: `sgrep` 1500,
+`xread`/`structo`/`gitbrief` 2000, `repomap`/`codediff` 3000.
 
 Per-tool design rationale lives in each `tools/<name>/DECISIONS.md` and
 current state in its `STATUS.md` — read those rather than restating them
@@ -112,4 +96,3 @@ here. What bites you if you don't know it:
 ## Notes on repo state
 
 - Git repository since 2026-07-10; remote: `github.com/illpro226/LLM-tools` (public since 2026-08-07 — treat anything committed here as published). Commit style per `AGENTS.md`: short, imperative subjects (`add xread token cap tests`).
-- `.claude/settings.local.json` contains an allowlist scoped to `tokq` development (pytest, tiktoken checks, venv setup) — it's specific to work already done there, not a general policy.

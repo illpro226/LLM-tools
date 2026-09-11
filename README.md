@@ -77,7 +77,7 @@ logging at your checkout via `LLM_TOOLS_SAVINGS_ROOT`.
 | `repomap` | Orient in an unfamiliar repo: tree + ranked symbol outline | `repomap . --focus src/auth` |
 | `sgrep` | Ranked, deduped search results instead of a raw `rg` dump | `sgrep "retry" src --counts-only` |
 | `runlite` | Run a build/test command, get a failure-focused report; `trace` does the same for a stack trace you didn't produce | `runlite -- python -m pytest -q`, `runlite trace app.log` |
-| `structo` | Schema/shape of a JSON/YAML/JSONL/XML/CSV file, not its contents | `structo data.json --path items[0]` |
+| `structo` | Schema/shape of a JSON/YAML/TOML/JSONL/XML/CSV file, not its contents | `structo data.json --path items[0]` |
 | `gitbrief` | Layered git views (status, hunks, log, PR summary) | `gitbrief`, `gitbrief pr main` |
 | `codediff` | What a change *means* — API/behavior/removed/mechanical + risk flags | `codediff --staged` |
 | `tokq` | Token cost meter — flags context-wasteful files before you read them | `tokq dir .`, `tokq lint docs/` |

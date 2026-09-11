@@ -2,6 +2,17 @@
 
 A toolkit of small, composable CLI tools that help coding agents (Claude Code, aider, etc.) spend fewer tokens per task. The common theme: **never put raw, bulky content into an agent's context when a compressed, targeted view will do.**
 
+> **Historical build brief.** The 14 tools listed here were the original
+> plan; the build list it describes is superseded by
+> [`docs/decisions/0001`](docs/decisions/0001-starting-list-and-deferrals.md) and closed by
+> [`0003`](docs/decisions/0003-close-the-list.md). What actually exists:
+> nine tools live (`tokq`, `runlite`, `xread`, `sgrep`, `repomap`,
+> `gitbrief`, `structo`, `repoindex`, `codediff`), `rq` and `testmap`
+> archived (0009), `callgraph` folded into `repoindex`, and
+> `factbook`/`docsnip` deferred indefinitely. Read this file for the
+> original intent behind a tool, not for the suite's current shape —
+> `CLAUDE.md` and each tool's `STATUS.md` are the authority there.
+
 Each tool below has a brief description and a bootstrapping prompt you can paste into a coding agent to start building it. Suggested conventions for the whole suite:
 
 - One directory per tool (`tools/<name>/`), each a standalone CLI installable on PATH.

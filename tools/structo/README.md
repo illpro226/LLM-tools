@@ -6,8 +6,8 @@ instead of the content. A 2 MB JSON dump becomes twenty lines.
 
 ```
 ./structo.py FILE                summarize (format auto-detected:
-                                 json/jsonl/yaml/csv/tsv/xml/log)
-./structo.py FILE --path a.b[0].c    zoom into a JSON/YAML subtree
+                                 json/jsonl/yaml/toml/csv/tsv/xml/log)
+./structo.py FILE --path a.b[0].c    zoom into a JSON/YAML/TOML subtree
                                  (a leading [N] picks JSONL record N;
                                   [-1] is the last, [-2] the one before)
 ./structo.py FILE --raw --path ...   print the exact value at --path
@@ -19,7 +19,9 @@ instead of the content. A 2 MB JSON dump becomes twenty lines.
 ```
 
 Everything streams — memory is O(schema + samples), never O(file), which
-is test-enforced. Figures affected by sampling carry a `~` marker; clean
+is test-enforced. TOML is the one exception (ADR-008): `tomllib` has no
+event API, so the document is parsed whole; TOML files are configs, not
+the multi-gigabyte dumps streaming exists for. Figures affected by sampling carry a `~` marker; clean
 figures are exact. Output is plain text and deterministic (sampling is
 first-N, no RNG).
 

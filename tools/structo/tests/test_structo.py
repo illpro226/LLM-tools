@@ -42,7 +42,8 @@ def has_yaml():
 def test_detection_by_extension(capsys):
     for name, fmt in (("sample.json", "json"), ("sample.jsonl", "jsonl"),
                       ("sample.csv", "csv"), ("sample.tsv", "tsv"),
-                      ("sample.xml", "xml"), ("sample.log", "log")):
+                      ("sample.xml", "xml"), ("sample.log", "log"),
+                      ("sample.toml", "toml")):
         out = ok([fx(name)], capsys)
         assert "format: %s (extension)" % fmt in out
 
@@ -119,6 +120,87 @@ def test_yaml_schema(capsys):
     features = next(l for l in lines if l.startswith("features:"))
     assert "len 2" in features
     assert any(l.startswith("flag: int 50%") for l in lines)
+
+
+# ------------------------------------------------------------------- toml
+
+def test_toml_schema(capsys):
+    out = ok([fx("sample.toml")], capsys)
+    lines = norm(out)
+    assert "format: toml (extension)" in lines[0]
+    assert any(l.startswith("project: object 100%") for l in lines)
+    assert any(l.startswith("scripts: object 100%") for l in lines)
+    assert any(l.startswith("keywords: array 100%") and "len 2" in l
+               for l in lines)
+    assert any(l.startswith("retries: int 50%") for l in lines)
+    # a TOML date is its own type, not a string, and shows its value
+    assert any(l.startswith("released: datetime 100%") and "2026-08-21" in l
+               for l in lines)
+
+
+def test_toml_table_header_is_not_sniffed_as_json(tmp_path, capsys):
+    """The reported bug: `[project]` sniffed as JSON and came back as soup."""
+    bare = tmp_path / "noext"
+    shutil.copyfile(fx("sample.toml"), bare)
+    out = ok([str(bare)], capsys)
+    assert "format: toml (sniffed)" in out
+    assert any(l.startswith("project: object") for l in norm(out))
+
+
+def test_toml_path_and_raw(capsys):
+    out = ok([fx("sample.toml"), "--path", "project.scripts"], capsys)
+    lines = norm(out)
+    assert any(l.startswith("demo: str 100%") for l in lines)
+    assert not any(l.startswith("version:") for l in lines)
+    assert ok([fx("sample.toml"), "--raw", "--path", "project.scripts.demo"],
+              capsys) == "demo.cli:main\n"
+    assert ok([fx("sample.toml"), "--raw", "--path", "meta.released"],
+              capsys) == "2026-08-21\n"
+    assert ok([fx("sample.toml"), "--raw", "--path", "project.keywords"],
+              capsys).startswith("[")
+
+
+def test_toml_select_array_of_tables(capsys):
+    out = ok([fx("sample.toml"), "--select", "name,enabled",
+              "--path", "tool.runner.jobs"], capsys)
+    assert rows(out) == [["name", "enabled"], ["alpha", "true"],
+                         ["beta", "false"]]
+
+
+def test_toml_select_needs_an_array(capsys):
+    code, _, err = run([fx("sample.toml"), "--select", "name"], capsys)
+    assert code == 2
+    assert "not an array of tables" in err
+
+
+def test_toml_path_not_found(capsys):
+    code, _, err = run([fx("sample.toml"), "--path", "project.nope"], capsys)
+    assert code == 2
+    assert "--path not found" in err
+
+
+def test_invalid_toml_errors_rather_than_guessing(tmp_path, capsys):
+    bad = tmp_path / "bad.toml"
+    bad.write_text("[project\nname = 1\n", encoding="utf-8")
+    code, out, err = run([str(bad)], capsys)
+    assert code == 2
+    assert "not valid toml" in err
+    assert out == ""
+
+
+def test_ini_sniff_falls_back_to_log(tmp_path, capsys):
+    """A sniff is a guess: ini-ish files summarize as a log, not an error."""
+    ini = tmp_path / "thing.ini"
+    ini.write_text("[section]\nkey = value\n", encoding="utf-8")
+    out = ok([str(ini)], capsys)
+    assert "format: log (sniffed)" in out
+
+
+def test_dotenv_is_not_claimed_as_toml(tmp_path, capsys):
+    env = tmp_path / "dotenv"
+    env.write_text("FOO=bar\nBAZ=qux\n", encoding="utf-8")
+    out = ok([str(env)], capsys)
+    assert "format: log (sniffed)" in out
 
 
 # ------------------------------------------------------------------- zoom

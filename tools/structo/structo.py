@@ -2,7 +2,7 @@
 """structo — schema and shape of a data file instead of its content.
 
     structo FILE              summarize (format auto-detected)
-    structo FILE --path a.b[0].c   zoom into a JSON/YAML subtree
+    structo FILE --path a.b[0].c   zoom into a JSON/YAML/TOML subtree
                               (a leading [N] picks JSONL record N;
                                [-1] is the last record)
     structo FILE --raw --path ...  print the exact value at --path
@@ -16,13 +16,15 @@
                               nesting and distribution detail ->
                               top-level structure only (never dropped)
 
-Formats: JSON, JSONL, YAML (needs PyYAML), CSV, TSV, XML, generic log.
+Formats: JSON, JSONL, YAML (needs PyYAML), TOML, CSV, TSV, XML, generic log.
 Detection is by extension, else content sniffing; the header states which.
 
 Everything is streamed — memory is O(schema + samples), never O(file):
 JSON via an incremental event tokenizer, JSONL per record, YAML via the
 PyYAML event API, CSV/logs per row/line, XML via iterparse with
-element clearing. Figures affected by sampling carry a `~` marker;
+element clearing. TOML is the one exception (ADR-008): tomllib has no
+event API, so the document is parsed whole — config-file sized by
+construction. Figures affected by sampling carry a `~` marker;
 clean figures are exact (see DECISIONS.md ADR-003 — sampling is
 first-N, deterministic).
 """
@@ -30,13 +32,14 @@ first-N, deterministic).
 import argparse
 import collections
 import csv
+import datetime
 import itertools
 import json
 import os
 import re
 import sys
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 DEFAULT_SAMPLE = 10
 # ADR-006: schema output is capped by default; --select/--raw are not.
@@ -50,7 +53,10 @@ TEMPLATE_CAP = 512
 
 EXT_FORMATS = {".json": "json", ".jsonl": "jsonl", ".ndjson": "jsonl",
                ".yaml": "yaml", ".yml": "yaml", ".csv": "csv",
-               ".tsv": "tsv", ".xml": "xml", ".log": "log"}
+               ".tsv": "tsv", ".xml": "xml", ".log": "log",
+               ".toml": "toml"}
+# Formats whose value model is a JSON-ish tree, so --path/--raw address them.
+TREE_FORMATS = ("json", "jsonl", "yaml", "toml")
 
 
 class StructoError(Exception):
@@ -226,8 +232,34 @@ def value_events(value):
         yield ("scalar", "float", repr(value))
     elif value is None:
         yield ("scalar", "null", "null")
+    elif isinstance(value, (datetime.datetime, datetime.date,
+                            datetime.time)):
+        # TOML has first-class dates; calling them `str` would hide the one
+        # thing that makes them worth knowing about.
+        yield ("scalar", "datetime", value.isoformat())
     else:
         yield ("scalar", "str", str(value))
+
+
+def toml_value(path):
+    """The whole TOML document as a Python value.
+
+    Unlike every other format, this is not streamed: tomllib exposes no
+    event API, and TOML is a config format — files are kilobytes, not the
+    multi-gigabyte logs the streaming promise exists for (ADR-008)."""
+    try:
+        import tomllib
+    except ImportError:                                   # Python < 3.11
+        try:
+            import tomli as tomllib
+        except ImportError:
+            raise StructoError("toml support needs Python 3.11+ (tomllib) "
+                               "or tomli (pip install tomli)")
+    try:
+        with open(path, "rb") as fh:
+            return tomllib.load(fh)
+    except tomllib.TOMLDecodeError as exc:
+        raise StructoError("%s is not valid toml: %s" % (path, exc))
 
 
 _YAML_INT = re.compile(r"^[+-]?\d+$")
@@ -300,7 +332,7 @@ def _merge_scalar(node, kind, text):
     if kind == "str":
         example = '"%s"' % (text[:EXAMPLE_CAP]
                             + ("…" if len(text) > EXAMPLE_CAP else ""))
-    elif kind in ("int", "float"):
+    elif kind in ("int", "float", "datetime"):
         example = text
     else:
         return
@@ -714,6 +746,29 @@ def render_xml(model, level):
 
 # -------------------------------------------------------------- detection
 
+_TOML_TABLE = re.compile(r"^\[\[?[A-Za-z0-9_.\"'-]+\]\]?\s*(#.*)?$")
+# The RHS must look like a TOML value, so `.env`-style `FOO=bar` (invalid
+# TOML, and better summarized as a log) is not claimed here.
+_TOML_KV = re.compile(r"^[A-Za-z0-9_.\"'-]+\s*=\s*"
+                      r"([\"'\[{+-]|\d|true\b|false\b)")
+
+
+def _looks_toml(lines):
+    """TOML on the first meaningful line, or not at all.
+
+    A TOML file opens with a table header (`[project]`, `[[a.b]]`) or a
+    `key = value`; JSON opens with a bare `{`/`[` or a bracket holding
+    commas, neither of which matches. Deciding on the first line only is
+    what keeps this from claiming JSON documents: `[project]` used to sniff
+    as JSON and come back as character soup (docs/known-issues)."""
+    for line in lines:
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        return bool(_TOML_TABLE.match(s) or _TOML_KV.match(s))
+    return False
+
+
 def detect(path):
     ext = os.path.splitext(path)[1].lower()
     if ext in EXT_FORMATS:
@@ -728,6 +783,8 @@ def detect(path):
     lines = [l for l in text.splitlines() if l.strip()]
     if stripped.startswith("<"):
         return "xml", "sniffed"
+    if _looks_toml(lines):
+        return "toml", "sniffed"
     if stripped[:1] in "{[":
         if len(lines) >= 2:
             try:
@@ -942,7 +999,10 @@ def _cell(value):
         return ""
     if isinstance(value, str):
         return _TSV_CLEAN.sub(" ", value)
-    text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    if isinstance(value, (datetime.date, datetime.time)):
+        return value.isoformat()
+    text = json.dumps(value, ensure_ascii=False, separators=(",", ":"),
+                      default=str)
     return _TSV_CLEAN.sub(" ", text)
 
 
@@ -1001,6 +1061,17 @@ def iter_records(path, fmt, segs):
                 if ev[0] == "]":
                     return
                 yield _materialize(events, ev)
+    elif fmt == "toml":
+        value = toml_value(path)
+        if segs:
+            value = _walk(value, segs)
+            if value is _MISSING:
+                raise StructoError("--path not found in %s" % path)
+        if not isinstance(value, list):
+            raise StructoError(
+                "--select reads an array of records (%s is not an array of "
+                "tables)" % ("--path" if segs else "the top level"))
+        yield from value
     elif fmt in ("csv", "tsv"):
         with open(path, encoding="utf-8", errors="replace",
                   newline="") as fh:
@@ -1015,8 +1086,8 @@ def iter_records(path, fmt, segs):
                        for i, h in enumerate(header)}
     else:
         raise StructoError("--select needs record-shaped data (json array, "
-                           "jsonl, yaml sequence, csv, tsv; %s detected)"
-                           % fmt)
+                           "jsonl, yaml sequence, toml array of tables, "
+                           "csv, tsv; %s detected)" % fmt)
 
 
 def select_rows(path, fmt, segs, fields):
@@ -1044,6 +1115,8 @@ def extract_raw(path, fmt, target):
     elif fmt == "json":
         with open(path, encoding="utf-8", errors="replace") as fh:
             value = extract_value(json_events(fh, full=True), target)
+    elif fmt == "toml":
+        value = _walk(toml_value(path), target)
     else:
         with open(path, encoding="utf-8", errors="replace") as fh:
             value = extract_value(yaml_events(fh), target)
@@ -1056,7 +1129,7 @@ def extract_raw(path, fmt, target):
 
 def summarize(path, fmt, sample, target):
     """Build (model, levels) for a detected format."""
-    if fmt in ("json", "jsonl", "yaml"):
+    if fmt in TREE_FORMATS:
         record_index = None
         if fmt == "jsonl" and target and target[0][0] == "i":
             record_index, target = target[0][1], target[1:] or None
@@ -1068,6 +1141,8 @@ def summarize(path, fmt, sample, target):
         elif fmt == "yaml":
             with open(path, encoding="utf-8", errors="replace") as fh:
                 shape.feed(yaml_events(fh))
+        elif fmt == "toml":
+            shape.feed(value_events(toml_value(path)))
         elif record_index is not None:
             record, seen = _nth_record(path, record_index)
             if record is _MISSING:
@@ -1153,7 +1228,7 @@ def main(argv=None):
                     "instead of its content")
     parser.add_argument("file", metavar="FILE")
     parser.add_argument("--path", metavar="A.B[0].C",
-                        help="zoom into a JSON/YAML subtree (a leading "
+                        help="zoom into a JSON/YAML/TOML subtree (a leading "
                              "[N] picks JSONL record N)")
     parser.add_argument("--raw", action="store_true",
                         help="print the exact value at --path instead of "
@@ -1161,7 +1236,8 @@ def main(argv=None):
     parser.add_argument("--select", metavar="F1,F2",
                         help="project fields out of every record as TSV, "
                              "one row per record (json array/jsonl/yaml "
-                             "sequence/csv/tsv), for piping to awk/sort")
+                             "sequence/toml array of tables/csv/tsv), for "
+                             "piping to awk/sort")
     parser.add_argument("--sample", type=int, metavar="N",
                         default=DEFAULT_SAMPLE,
                         help="array elements aggregated per array "
@@ -1180,10 +1256,19 @@ def main(argv=None):
         if not os.path.isfile(args.file):
             raise StructoError("not a file: %s" % args.file)
         fmt, how = detect(args.file)
+        if fmt == "toml" and how == "sniffed":
+            # The first-line sniff also matches ini/conf files, which tomllib
+            # rejects. A sniff is a guess, so back off to the generic log
+            # summary rather than failing on a file we were only guessing
+            # about; an explicit .toml still reports the parse error.
+            try:
+                toml_value(args.file)
+            except StructoError:
+                fmt = "log"
         target = None
         if args.path:
-            if fmt not in ("json", "jsonl", "yaml"):
-                raise StructoError("--path zooms into json/yaml/jsonl "
+            if fmt not in TREE_FORMATS:
+                raise StructoError("--path zooms into json/yaml/jsonl/toml "
                                    "(%s detected as %s)" % (args.file, fmt))
             target = parse_path(args.path)
             check_negatives(target, fmt)
@@ -1226,8 +1311,13 @@ def main(argv=None):
             if target is None:
                 raise StructoError("--raw needs --path")
             value = extract_raw(args.file, fmt, target)
-            text = value if isinstance(value, str) \
-                else json.dumps(value, ensure_ascii=False, indent=2)
+            if isinstance(value, str):
+                text = value
+            elif isinstance(value, (datetime.date, datetime.time)):
+                text = value.isoformat()   # a TOML date is a value, not JSON
+            else:
+                text = json.dumps(value, ensure_ascii=False, indent=2,
+                                  default=str)
             if budget and _est(text.splitlines()) > budget:
                 raise StructoError(
                     "value at %s is ~%d tokens (budget %d); --raw never "

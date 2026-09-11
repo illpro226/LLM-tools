@@ -1,5 +1,22 @@
 # structo Changelog
 
+- 2026-08-22: v0.6.0 - TOML is a supported format. `structo pyproject.toml`
+  used to report `format: json (sniffed)` and emit character soup: the
+  sniffer saw the leading `[` of a `[table]` header and handed the file to
+  the JSON tokenizer, which is lenient enough to turn nonsense into a
+  confident-looking shape. `.toml` now detects by extension, or by sniffing
+  the first meaningful line (`[table]`/`[[array]]` header, or `key = <toml
+  value>`), and parses via `tomllib` (stdlib 3.11+; `tomli` accepted as a
+  fallback). It goes through `value_events`, so `--path`, `--raw` and
+  `--select` (over an array of tables) work as they do for JSON/YAML, and
+  TOML dates keep their own `datetime` scalar type instead of flattening to
+  `str`. This is the one format parsed whole rather than streamed - tomllib
+  has no event API and TOML is config-sized by construction (ADR-008). A
+  file *sniffed* as TOML that fails to parse (ini/conf files share the
+  `[section]` opener) falls back to the log summary; one named `.toml`
+  exits 2 with the parse error rather than guessing. 9 new tests (71
+  total). Closes docs/known-issues/structo-toml-sniffed-as-json.md.
+
 - 2026-08-06: v0.5.0 - `--path "[-1]"` selects the last JSONL record, `[-2]`
   the one before it, and sub-paths compose (`[-1].tool`). Append-only logs
   are the normal case for JSONL - `events.jsonl`, session transcripts, ndjson

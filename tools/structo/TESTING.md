@@ -6,7 +6,8 @@ format, plus a large generated file for the streaming guarantee.
 ## Fixtures
 
 - `tests/fixtures/` — `sample.json` (nested, optional keys, large array),
-  `sample.jsonl`, `sample.yaml`, `sample.csv`, `sample.tsv`, `sample.xml`,
+  `sample.jsonl`, `sample.yaml`, `sample.toml` (tables, an array
+  of tables, a date), `sample.csv`, `sample.tsv`, `sample.xml`,
   `sample.log` (known timestamp format and repeated templates).
 - Generators producing a ~25 MB JSONL and a ~25 MB single-array JSON on
   the fly for the memory-bound tests (summary and `--select` respectively;
@@ -20,6 +21,12 @@ format, plus a large generated file for the streaming guarantee.
   extensions stripped, by content sniffing.
 - **JSON/YAML** — merged schema: types, optionality percentages, array-length
   stats; arrays past `--sample N` are sampled and labeled as estimates.
+- **TOML** — schema, `--path`, `--raw` and `--select` over an array of
+  tables; dates render as their own `datetime` type. Detection guards both
+  ways: a `[table]` header sniffs as TOML rather than JSON (the bug that
+  motivated support), while `.env`-style `FOO=bar` and ini files that
+  `tomllib` rejects fall back to the log summary. An invalid `.toml`
+  exits 2 with the parse error and nothing on stdout.
 - **CSV/TSV** — per-column type, null rate, min/max, cardinality; exactly 3
   sample rows.
 - **Logs** — timestamp format detected; line count exact; top templates

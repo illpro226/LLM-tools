@@ -24,7 +24,7 @@ path or run `python tools/<name>/<name>.py` from this repo.
 | `ls -R` / reading many files to get oriented | `repomap` | `repomap . --focus src/auth` |
 | Raw `grep`/`rg` dumps | `sgrep` (needs `rg` on PATH) | `sgrep "retry" src --counts-only` |
 | Running a build/test and reading the full log | `runlite` | `runlite -- python -m pytest -q` |
-| `cat` on JSON/YAML/JSONL/XML/CSV/logs | `structo` | `structo data.json --path items[0]` |
+| `cat` on JSON/YAML/TOML/JSONL/XML/CSV/logs | `structo` | `structo data.json --path items[0]` |
 | Raw `git diff` / `git log` / `git status` | `gitbrief` | `gitbrief`, `gitbrief hunks`, `gitbrief show FILE`, `gitbrief log`, `gitbrief pr main` |
 | Re-reading hunks to judge what a change means | `codediff` | `codediff --staged` (API/behavior/removed/mechanical + risk flags) |
 | Grepping for call sites and relationships | `sgrep` | `sgrep "LoginManager" --counts-only`, then narrow |

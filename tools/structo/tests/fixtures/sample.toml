@@ -1,0 +1,25 @@
+# a small config, shaped like a pyproject
+[project]
+name = "demo"
+version = "0.1.0"
+requires-python = ">=3.11"
+keywords = ["cli", "tokens"]
+
+[project.scripts]
+demo = "demo.cli:main"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[[tool.runner.jobs]]
+name = "alpha"
+enabled = true
+
+[[tool.runner.jobs]]
+name = "beta"
+enabled = false
+retries = 3
+
+[meta]
+released = 2026-08-21

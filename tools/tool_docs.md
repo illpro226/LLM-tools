@@ -265,17 +265,17 @@ JS/TS top-level declarations.
 
 ## structo — big-file shape summarizer
 
-**Status:** Implemented v0.2.0.
+**Status:** Implemented v0.6.0.
 
 Prints the schema and shape of a data file — keys, types, optionality, array
 lengths, column stats, log templates, a couple of samples — instead of its
 content. Formats: JSON, JSONL, YAML (PyYAML — the one optional dependency;
-clear error if absent), CSV, TSV, XML, generic log; detected by extension
-else content sniffing, and the header states which.
+clear error if absent), TOML, CSV, TSV, XML, generic log; detected by
+extension else content sniffing, and the header states which.
 
 ```
 structo FILE                     # summarize (format auto-detected)
-structo FILE --path a.b[0].c     # zoom into a JSON/YAML subtree (a leading
+structo FILE --path a.b[0].c     # zoom into a JSON/YAML/TOML subtree (a leading
                                   # [N] picks JSONL record N)
 structo FILE --raw --path ...    # print the exact value at --path
                                   # (strings verbatim, else JSON)
@@ -286,11 +286,13 @@ structo FILE --max-tokens N      # cap output; samples go first, top-level
 
 **Streaming (ADR-001):** JSON via an incremental event tokenizer (never
 `json.load`s a whole file), JSONL per record, YAML via the PyYAML event API,
-CSV per row, logs per line, XML via `iterparse` with element clearing.
+CSV per row, logs per line, XML via `iterparse` with element clearing. TOML
+is the one exception (ADR-008): `tomllib` has no event API, so the document
+is parsed whole — config-sized by construction.
 Memory is O(schema + samples) — test-enforced with tracemalloc on a
 generated ~25 MB JSONL file (peak < 15 MB asserted).
 
-**JSON/YAML/JSONL:** merged schema with types, optionality percentages (key
+**JSON/YAML/JSONL/TOML:** merged schema with types, optionality percentages (key
 presence / parent instances), exact array-length stats; array *elements*
 beyond `--sample N` are not aggregated and carry a `~` marker (ADR-003 —
 sampling is first-N, deterministic, no RNG). One or two example values per
