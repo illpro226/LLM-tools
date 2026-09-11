@@ -19,11 +19,21 @@ all.
 Exit 0 = pass, 1 = failure.
 """
 import argparse
+import atexit
 import importlib.util
 import os
 import sys
+import tempfile
 
 DEFAULT_HOOK = os.path.expanduser("~/.claude/hooks/llm-tools-guard.py")
+
+# The range-read rule asks the filesystem how long a file is, so its cases
+# need a real one. 12 lines: short enough that a "small" range still covers
+# it, which is the case the flat line cap alone cannot catch.
+_fd, FIXTURE = tempfile.mkstemp(prefix="guard-fixture-", suffix=".txt")
+with os.fdopen(_fd, "w") as _fh:
+    _fh.write("".join(f"line {i}\n" for i in range(1, 13)))
+atexit.register(lambda: os.path.exists(FIXTURE) and os.unlink(FIXTURE))
 
 
 def load(name, path):
@@ -149,7 +159,65 @@ CORPUS = [
     ("sgrep foo src", "Bash", "ALLOW", "suite tool", None),
     ("", "Bash", "ALLOW", "empty command", None),
 
+    # --- the structo redirect's own bypass route --------------------------
+    ("python -m json.tool manifest.json", "Bash", "DENY",
+     "json.tool reaches the blocked outcome by another route", "tighten"),
+    ("python3 -m json.tool --sort-keys a.json", "Bash", "DENY",
+     "python3 spelling, with flags", "tighten"),
+    ("python -m json.tool a.json > norm.json", "Bash", "ALLOW",
+     "normalizing to a file costs no tokens", None),
+    ("python -m json.tool a.json | wc -l", "Bash", "ALLOW",
+     "counted json.tool", None),
+    ('git commit -m "dropped python -m json.tool for structo"', "Bash",
+     "ALLOW", "json.tool named in a commit message", None),
+
+    # --- range reads that are whole-file dumps in disguise ----------------
+    # The 2026-09-11 session's five real bypasses, plus the shapes around
+    # them. FIXTURE is 12 lines, so a range ending at or past 12 covers it.
+    (f"sed -n 1,163p {FIXTURE}", "Bash", "DENY",
+     "range past the file's length", "tighten"),
+    (f"sed -n 1,12p {FIXTURE}", "Bash", "DENY",
+     "range covering exactly the whole file", "tighten"),
+    (f"sed -n '1,12p' {FIXTURE}", "Bash", "DENY",
+     "quoted script: masking must not hide the range", "tighten"),
+    (f"sed -n 1,$p {FIXTURE}", "Bash", "DENY", "open-ended sed range", "tighten"),
+    (f"sed 's/a/b/' {FIXTURE}", "Bash", "DENY",
+     "sed without -n prints every line", "tighten"),
+    (f"head -n 400 {FIXTURE}", "Bash", "DENY", "head above the cap", "tighten"),
+    (f"head -n 12 {FIXTURE}", "Bash", "DENY",
+     "head covering the whole file", "tighten"),
+    (f"tail -n +2 {FIXTURE}", "Bash", "DENY", "tail from a line to EOF", "tighten"),
+    (f"awk 'NR<=163' {FIXTURE}", "Bash", "DENY", "awk range past the cap", "tighten"),
+
+    # Caught live while verifying this very fix: 59 of 73 lines passed the
+    # first cap as "bounded". A range that near the end is the whole file.
+    (f"sed -n 1,10p {FIXTURE}", "Bash", "DENY",
+     "range reaching 80% of the file", "tighten"),
+    (f"wc -l {FIXTURE}; sed -n 1,12p {FIXTURE}", "Bash", "DENY",
+     "range derived from a wc -l in the same call", "tighten"),
+
+    (f"sed -n 5,20p {FIXTURE}", "Bash", "ALLOW", "genuinely bounded range", None),
+    (f"sed -n 5p {FIXTURE}", "Bash", "ALLOW", "single-line print", None),
+    (f"sed -i 's/a/b/' {FIXTURE}", "Bash", "ALLOW", "in-place edit prints nothing", None),
+    (f"head {FIXTURE}", "Bash", "ALLOW", "head's 10-line default", None),
+    (f"head -5 {FIXTURE}", "Bash", "ALLOW", "small head", None),
+    (f"tail -5 {FIXTURE}", "Bash", "ALLOW", "small tail", None),
+    (f"wc -l {FIXTURE}", "Bash", "ALLOW", "counting is not reading", None),
+    (f"awk '{{s+=$1}} END{{print s}}' {FIXTURE}", "Bash", "ALLOW",
+     "aggregation prints one line", None),
+    (f"sed -n 1,163p {FIXTURE} > /tmp/o", "Bash", "ALLOW", "redirected range read", None),
+    (f"sed -n 1,163p {FIXTURE} | wc -l", "Bash", "ALLOW", "counted range read", None),
+    ("ls | sed -n 1,163p", "Bash", "ALLOW", "pipeline filter, no file", None),
+    ("sed -n 1,40p nonexistent-file.txt", "Bash", "ALLOW",
+     "unmeasurable and under the cap: no opinion", None),
+    ("sed -n 1,163p nonexistent-file.txt", "Bash", "DENY",
+     "unmeasurable but over the cap: the cap still decides", "tighten"),
+    (f"git commit -m \"used sed -n 1,163p {FIXTURE} before\"", "Bash", "ALLOW",
+     "range vocabulary inside a commit message", None),
+
     # --- scoping: one bounded command never vouches for another ----------
+    (f"sed -n 5,20p {FIXTURE} && sed -n 1,163p {FIXTURE}", "Bash", "DENY",
+     "second range read unbounded", "tighten"),
     ("rg -n a src > /tmp/o && rg -n b src", "Bash", "DENY", "second search unbounded", None),
     ("rg -n a src > /tmp/o1 && rg -n b src > /tmp/o2", "Bash", "ALLOW",
      "both searches redirected", None),

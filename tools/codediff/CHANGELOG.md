@@ -1,5 +1,15 @@
 # codediff Changelog
 
+- 2026-09-11: v0.4.0 — new `Doc changes` section: markdown files get a
+  structural pass (headings added/removed, bodies moved, fenced code
+  changed) instead of falling out as "not analyzed" (ADR-009). Whatever
+  remains unanalyzed is now stated as a share of the whole change —
+  `4 of 6 files, 61% of changed lines not analyzed` — rather than as a
+  trailing parenthetical, so the summary declares its own incompleteness.
+  `--json` gains `unanalyzed_share`. Closes
+  docs/known-issues/codediff-skips-markdown-so-doc-heavy-diffs-read-as-trivial.md.
+  11 new tests (49 total).
+
 - 2026-07-31: v0.3.1 — git repository discovery is bounded by
   `GIT_CEILING_DIRECTORIES`, defaulted to `$HOME` (ADR-008). Without it, a
   run outside any project walked up to a home directory that is itself a

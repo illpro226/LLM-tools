@@ -30,6 +30,17 @@ verdict rejects the whole Bash command including any `&&`-chained steps.
     redirect on one command in a chain does not vouch for another.)
   - Bash/PowerShell `cat FILE` dumps -> xread / structo
     (heredocs, redirects, and pipes into head/tail/wc stay allowed)
+  - `sed`/`head`/`tail`/`awk` range reads that are whole-file dumps wearing
+    a range flag -> xread / structo / a bounded Read. `sed -n 1,163p FILE`
+    and `cat FILE` emit identical bytes, so matching the command name alone
+    left the cat rule bypassable by an agent complying in good faith with
+    "use a bounded read". Denied when the range exceeds MAX_RANGE_LINES,
+    when it has no upper bound (`1,$p`, `tail -n +40`, `sed` without `-n`),
+    or when it provably covers a named file's whole length — the last
+    catching `sed -n 1,46p` on a 46-line file, which no flat cap can. The
+    range is parsed from the *raw* command, since masking blanks a quoted
+    `'1,163p'` script. Bounded ranges, single-line prints, `head`'s
+    10-line default, `sed -i`, and pipeline filters stay allowed.
   - PowerShell Get-Content/gc/type without a bounding flag -> xread / Read
   - PowerShell Select-String/sls file searches at command position -> sgrep
   - node -e / python -c one-liners that read + parse JSON -> structo
@@ -117,11 +128,52 @@ PS_SLS_RE = re.compile(CMD + r"(?:Select-String|sls)\b", re.IGNORECASE)
 INLINE_EVAL_RE = re.compile(r"\bnode\s+(?:-e|--eval)\b|\bpython3?\s+-c\b")
 JSON_PARSE_RE = re.compile(r"JSON\.parse|json\.loads?\b")
 BOUNDED_PIPE_RE = re.compile(r"\|\s*(?:head|tail|wc)\b")
+# `python -m json.tool FILE` reaches the same normalize-and-print outcome
+# as the inline `-c` one-liner above by a route the blocklist didn't
+# enumerate — the identical enforcement-gap shape as the range reads
+# below, and observed as the literal next call after a structo redirect.
+JSON_TOOL_RE = re.compile(
+    CMD + r"(?:python3?|py)\s+(?:-\S+\s+)*-m\s+json\.tool\b")
 # A `>` not immediately preceded by a digit, so `2>/dev/null` (stderr-only)
 # doesn't masquerade as a real stdout redirect the way `>`/`1>`/`&>` do.
 STDOUT_REDIRECT_RE = re.compile(r"(?<!\d)>")
 PS_BOUNDED_RE = re.compile(r"-TotalCount\b|-Tail\b|-First\b|-Last\b",
                            re.IGNORECASE)
+
+# --- range reads that are whole-file dumps in disguise -----------------
+# `sed -n 1,163p FILE` and `cat FILE` emit identical bytes, so matching on
+# the command name alone leaves the cat rule trivially bypassable by an
+# agent *complying in good faith* with "use a bounded read" — `sed -n
+# START,ENDp` is the normal idiom for one. These rules match on effect
+# instead. Command position only (CMD excludes `|`), so filtering another
+# command's output stays untouched.
+RANGE_READ_RE = re.compile(CMD + r"(sed|head|tail|awk)(?=\s|$)")
+# Anything past this many lines is a dump whatever asked for it. The
+# filed issue's own standard: "bounded reads of a few dozen lines keep
+# working". Set higher than that and a 59-line slice of a 73-line file
+# passes as bounded, which is the bypass wearing a smaller number.
+MAX_RANGE_LINES = 60
+# ...and a range is "the whole file" well before it reaches the last line.
+# The filed recommendation says "covers (or nearly covers)", because the
+# range was derived from a `wc -l` run moments earlier in order to capture
+# everything.
+WHOLE_FILE_FRACTION = 0.8
+# Reading the file to learn its length is only worth it for files small
+# enough that the read is free; past this the flat cap above decides.
+MAX_MEASURE_BYTES = 4_000_000
+# `12,40p` / `12 , 40 p` — an explicit closed line range.
+SED_CLOSED_RE = re.compile(r"(\d+)\s*,\s*(\d+)\s*p\b")
+# `1,$p`, `40,$p`, `$p`, or a bare `p` under -n: no upper bound at all.
+SED_OPEN_RE = re.compile(r"(?:\d+\s*,\s*)?\$\s*p\b|^\s*p\b")
+# `-n 40`, `-n40`, `-40` — a line count on head/tail.
+COUNT_FLAG_RE = re.compile(r"(?:^|\s)-(?:n\s*)?\+?(\d+)\b")
+# `tail -n +40` reads from line 40 to EOF: open-ended, not a bound.
+TAIL_FROM_RE = re.compile(r"(?:^|\s)-n?\s*\+\d+\b")
+# `NR<=163`, `NR < 200`, `NR==5` — awk's line-range idiom.
+AWK_NR_RE = re.compile(r"\bNR\s*(<=?|==)\s*(\d+)")
+# `sed -i` edits in place and prints nothing.
+SED_INPLACE_RE = re.compile(r"(?:^|\s)-i\b|--in-place\b")
+SED_QUIET_RE = re.compile(r"(?:^|\s)-[a-zA-Z]*n[a-zA-Z]*(?=\s|$)")
 
 # --- savings tracking -------------------------------------------------
 # Where the LLM-tools checkout lives, per host. This file is deployed
@@ -239,6 +291,118 @@ def _output_reaches_context(args: str) -> bool:
     """
     return not (STDOUT_REDIRECT_RE.search(args)
                 or BOUNDED_PIPE_RE.search(args))
+
+
+def _range_file(args: str):
+    """The first argument that names an existing file, or None.
+
+    Positional-only: a token starting with `-` is a flag, and sed's script
+    (`-n '1,40p'`, `'s/a/b/'`) never names a path on disk, so the isfile
+    test rejects it without needing to know sed's grammar.
+    """
+    for tok in args.split():
+        tok = tok.strip("'\"")
+        if not tok or tok.startswith("-"):
+            continue
+        try:
+            if os.path.isfile(tok):
+                return tok
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def _line_count(path: str):
+    """Lines in `path`, or None if that can't be answered cheaply.
+
+    None means "don't know", and every caller treats it as "no opinion" —
+    the flat MAX_RANGE_LINES cap still applies. Measuring must never be
+    able to turn into an error inside a hook.
+    """
+    try:
+        if os.path.getsize(path) > MAX_MEASURE_BYTES:
+            return None
+        with open(path, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return None
+    if not data:
+        return 0
+    return data.count(b"\n") + (0 if data.endswith(b"\n") else 1)
+
+
+def _covers_whole_file(args: str, start: int, end) -> bool:
+    """True when a range provably spans (nearly) all of a named file.
+
+    `sed -n 1,46p AGENTS.md` on a 46-line file is a whole-file dump even
+    though 46 is a modest number — which is why the flat cap alone is not
+    enough. `end` of None means open-ended (reads to EOF).
+    """
+    path = _range_file(args)
+    if path is None:
+        return False
+    total = _line_count(path)
+    if not total:
+        return False
+    if start > 1:
+        return False
+    return end is None or end >= total * WHOLE_FILE_FRACTION
+
+
+def _range_read_reason(name: str, args: str):
+    """Why this range read is a whole-file dump, or None if it's bounded.
+
+    Returns the specific sentence to show, because the agent that filed
+    this issue believed `sed -n 1,163p` *was* the bounded read the cat rule
+    asked for. A denial that doesn't say why lands as arbitrary.
+    """
+    whole = ("A range covering the whole file is a whole-file dump — "
+             "`sed -n 1,$Np FILE` and `cat FILE` emit the same bytes.")
+    unbounded = "This range has no upper bound, so it reads to end of file."
+    too_big = (f"Reading more than {MAX_RANGE_LINES} lines at once is a dump "
+               "whichever command asks for it.")
+
+    if name == "sed":
+        if SED_INPLACE_RE.search(args):
+            return None  # edits in place, prints nothing
+        if not SED_QUIET_RE.search(args):
+            # Without -n, sed prints every line it reads, transformed or not.
+            return whole if _range_file(args) else None
+        if SED_OPEN_RE.search(args):
+            return unbounded
+        m = SED_CLOSED_RE.search(args)
+        if not m:
+            return None  # a single-address print (`-n 5p`) or no print at all
+        start, end = int(m.group(1)), int(m.group(2))
+        if end - start + 1 > MAX_RANGE_LINES:
+            return too_big
+        return whole if _covers_whole_file(args, start, end) else None
+
+    if name in ("head", "tail"):
+        if name == "tail" and TAIL_FROM_RE.search(args):
+            return unbounded
+        m = COUNT_FLAG_RE.search(args)
+        if not m:
+            return None  # no count means the 10-line default, which is bounded
+        n = int(m.group(1))
+        if n > MAX_RANGE_LINES:
+            return too_big
+        if name == "tail":
+            return None  # a bounded tail can't also be the whole file's start
+        return whole if _covers_whole_file(args, 1, n) else None
+
+    if name == "awk":
+        m = AWK_NR_RE.search(args)
+        if not m:
+            return None  # no line bound; aggregations print far less than they read
+        n = int(m.group(2))
+        if m.group(1) == "==":
+            return None  # one line
+        if n > MAX_RANGE_LINES:
+            return too_big
+        return whole if _covers_whole_file(args, 1, n) else None
+
+    return None
 
 
 # A heredoc introducer: `<<EOF`, `<<-EOF`, `<<'EOF'`, `<<"EOF"`.
@@ -401,7 +565,36 @@ def check_shell(tool: str, raw_command: str) -> None:
             command,
             "`cat FILE` dumps the whole file. Use `xread FILE --symbol "
             "NAME | --query \"...\" | --headings` (docs), `structo FILE` "
-            "for JSON/YAML/XML, or a bounded Read with offset/limit.")
+            "for JSON/YAML/TOML/XML, or a bounded Read with offset/limit.")
+    for m in RANGE_READ_RE.finditer(command):
+        # Carve-outs read the masked pipeline (a `>` inside quotes must not
+        # vouch for anything), but the range itself is parsed from the raw
+        # string: masking blanks the quoted `'1,163p'` script while
+        # preserving offsets, so the same slice of `raw_command` still has
+        # it. Scoped per match, like the search rules above.
+        if not _output_reaches_context(_own_pipeline(command, m.end())):
+            continue
+        why = _range_read_reason(m.group(1), _own_args(raw_command, m.end()))
+        if why:
+            deny_shell(
+                command,
+                why + " Use `xread FILE --symbol NAME | --query \"...\" | "
+                "--headings` (docs), `structo FILE` for JSON/YAML/TOML/XML, "
+                "or a Read with offset/limit. (Genuinely bounded ranges — "
+                f"up to {MAX_RANGE_LINES} lines, not covering the whole "
+                "file — are allowed, as is filtering another command's "
+                "output through a pipe.)")
+    for m in JSON_TOOL_RE.finditer(command):
+        if not _output_reaches_context(_own_pipeline(command, m.end())):
+            continue  # normalizing *to a file* costs nothing and is fine
+        deny_shell(
+            command,
+            "`python -m json.tool FILE` pretty-prints the whole file into "
+            "context. Use `structo FILE` for its shape, or `structo FILE "
+            "--path a.b.c` for one value. To compare two JSON files: "
+            "`structo A.json` and `structo B.json` answers 'same shape?'; "
+            "for values, `structo F --select f1,f2 > f.tsv` on each and "
+            "diff the two files — redirected output costs no tokens.")
     if (INLINE_EVAL_RE.search(command) and JSON_PARSE_RE.search(command)):
         deny_shell(
             command,

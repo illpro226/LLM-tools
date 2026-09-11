@@ -9,12 +9,18 @@
 Sections: API changes (added/renamed public symbols, signature changes as
 old → new), Behavior changes (modified bodies with cheap high-signal
 patterns: changed literals/defaults `3 → 5`, added/removed conditionals and
-calls), Removed (deleted symbols, noting deprecation markers), Tests (one
-counted line per test file — nothing depends on a test name, so enumerating
-them would bury the real surface change), Mechanical (formatting/comment-only,
-import reshuffles — one line per file). Risk is a
-flat list of deterministic, individually explainable flags — never an
-ordinal grade (see DECISIONS.md ADR-002 and docs/decisions/0002).
+calls), Doc changes (markdown heading deltas — sections added, removed, or
+whose body or fenced code moved; structure, not semantics), Removed (deleted
+symbols, noting deprecation markers), Tests (one counted line per test file —
+nothing depends on a test name, so enumerating them would bury the real
+surface change), Mechanical (formatting/comment-only, import reshuffles — one
+line per file). Risk is a flat list of deterministic, individually
+explainable flags — never an ordinal grade (see DECISIONS.md ADR-002 and
+docs/decisions/0002).
+
+Whatever is still left unanalyzed is reported as a share of the whole
+change ("4 of 6 files, 61% of changed lines"), so the summary states its
+own incompleteness rather than burying it in a trailing parenthetical.
 
 Both sides of every file are parsed with repoindex's pure extraction
 library (`extract(path, source)`, repoindex ADR-006), so before-versions
@@ -38,7 +44,7 @@ try:
 except ImportError:  # pragma: no cover - Python < 3.11
     tomllib = None
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 # ADR-007: the token cap is on by default. A pre-commit summary is read
 # while the context already holds the work that produced the diff, so it
@@ -52,10 +58,21 @@ DEFAULT_LARGE_DELTA = 5
 DB_RELPATH = os.path.join(".repoindex", "index.db")
 CONFIG_NAME = ".codediff.toml"
 
-SECTION_ORDER = ("api", "behavior", "removed", "tests", "mechanical")
+SECTION_ORDER = ("api", "behavior", "docs", "removed", "tests", "mechanical")
 SECTION_TITLES = {"api": "API changes", "behavior": "Behavior changes",
-                  "removed": "Removed", "tests": "Tests",
-                  "mechanical": "Mechanical"}
+                  "docs": "Doc changes", "removed": "Removed",
+                  "tests": "Tests", "mechanical": "Mechanical"}
+
+# Markdown has no symbols to extract, so it used to fall out as "not
+# analyzed" — which understates any commit where the doc IS the artifact
+# (spec repos, ADRs, a README contract changed alongside the code). The
+# pass below reads structure, not semantics: which sections appeared,
+# vanished, or had their body move.
+_MD_EXTS = (".md", ".markdown", ".mdx")
+_MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
+_MD_FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
+# Content above the first heading still belongs to somebody.
+_MD_PREAMBLE = "(preamble)"
 
 _LIT_RE = re.compile(r"\d+\.\d+|\d+|'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"")
 _TOKEN_RE = re.compile(
@@ -547,6 +564,153 @@ def analyze_file(entry, before_src, after_src, extract, lang, out):
                                       else "body changed"), line)
 
 
+def _is_markdown(path):
+    return path.lower().endswith(_MD_EXTS)
+
+
+def _md_sections(src):
+    """[{key, title, line, body, code}] for one markdown file.
+
+    `key` carries the heading level and an occurrence index so two `##
+    Usage` sections under different parents stay distinct. `code` is the
+    section's fenced-block lines, tracked separately: a changed command in
+    a README or AGENTS.md block is executable content, and the
+    highest-value markdown edit to surface.
+    """
+    sections, seen = [], {}
+    cur = {"key": _MD_PREAMBLE, "title": _MD_PREAMBLE, "line": 1,
+           "body": [], "code": []}
+    fence = None
+    for i, line in enumerate(src.splitlines(), 1):
+        m = _MD_FENCE_RE.match(line)
+        if m:
+            marker = m.group(1)[0]
+            if fence is None:
+                fence = marker
+            elif fence == marker:
+                fence = None
+            cur["code"].append(line.strip())
+            continue
+        if fence is not None:
+            cur["code"].append(line.strip())
+            continue
+        h = _MD_HEADING_RE.match(line)
+        if not h:
+            if line.strip():
+                cur["body"].append(line.strip())
+            continue
+        if cur["body"] or cur["code"] or cur["key"] != _MD_PREAMBLE:
+            sections.append(cur)
+        level, title = len(h.group(1)), h.group(2).strip()
+        n = seen[(level, title)] = seen.get((level, title), 0) + 1
+        cur = {"key": "%d/%s/%d" % (level, title, n), "title": title,
+               "line": i, "body": [], "code": []}
+    if cur["body"] or cur["code"] or cur["key"] != _MD_PREAMBLE:
+        sections.append(cur)
+    return sections
+
+
+def analyze_markdown(entry, before_src, after_src, out):
+    """Heading-level deltas for one markdown file, into the docs section."""
+    path = entry["path"]
+    before = {s["key"]: s for s in _md_sections(before_src)}
+    after = {s["key"]: s for s in _md_sections(after_src)}
+
+    def add(text, line):
+        out["docs"].append({"text": text, "path": path, "line": line})
+
+    # A wholly new or deleted document is one fact, not one fact per
+    # heading — the same reason Tests are counted rather than enumerated
+    # (archive/codediff-enumerates-every-new-test.md).
+    if not before and after:
+        add("+ new document, %d section%s"
+            % (len(after), "" if len(after) == 1 else "s"), 1)
+        return
+    if before and not after:
+        add("- document emptied (%d section%s)"
+            % (len(before), "" if len(before) == 1 else "s"), 1)
+        return
+
+    for key, sec in after.items():
+        if key in before:
+            continue
+        n = len(sec["body"])
+        add("+ %s (new section%s)"
+            % (sec["title"],
+               ", %d line%s" % (n, "" if n == 1 else "s") if n else ""),
+            sec["line"])
+    for key, sec in before.items():
+        if key not in after:
+            add("- %s (section removed)" % sec["title"], sec["line"])
+    for key, sec in after.items():
+        old = before.get(key)
+        if old is None:
+            continue
+        body_moved = old["body"] != sec["body"]
+        code_moved = old["code"] != sec["code"]
+        if not (body_moved or code_moved):
+            continue
+        what = []
+        if code_moved:
+            # Named first and named plainly: a changed fenced block is a
+            # changed command, which is the one markdown edit that can
+            # break a reader who copies it.
+            what.append("fenced code changed")
+        if body_moved:
+            delta = len(sec["body"]) - len(old["body"])
+            what.append("body changed" if not delta
+                        else "body %+d line%s" % (delta,
+                                                  "" if abs(delta) == 1
+                                                  else "s"))
+        add("~ %s (%s)" % (sec["title"], ", ".join(what)), sec["line"])
+
+
+def _changed_line_counts(before_rev, after_rev):
+    """{path: added + deleted}, mirroring changed_files' rev selection.
+
+    Git's own accounting rather than a second diff of our own, so the
+    share a summary reports about itself matches what any other tool
+    would say about the same commit. Binary files (`-\\t-`) are omitted.
+    """
+    if after_rev == ":0":
+        out = _git("diff", "--numstat", "-M", "--cached", before_rev)
+    elif after_rev:
+        out = _git("diff", "--numstat", "-M", before_rev, after_rev)
+    else:
+        out = _git("diff", "--numstat", "-M", before_rev)
+    counts = {}
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3 or parts[0] == "-":
+            continue
+        try:
+            counts[parts[-1]] = int(parts[0]) + int(parts[1])
+        except ValueError:
+            continue
+    return counts
+
+
+def _unanalyzed_note(unanalyzed, entries, counts):
+    """The 'not analyzed' line, stated as a share of the whole change.
+
+    A trailing parenthetical listing four filenames reads as a footnote;
+    '4 of 6 files, 61% of changed lines' states the summary's own
+    incompleteness, which is the thing the reader needs.
+    """
+    if not unanalyzed:
+        return []
+    total_lines = sum(counts.get(e["path"], 0) for e in entries)
+    skipped_lines = sum(counts.get(p, 0) for p in unanalyzed)
+    share = ""
+    if total_lines and skipped_lines:
+        share = ", %d%% of changed lines" % round(
+            100.0 * skipped_lines / total_lines)
+    return ["", "%d of %d file%s%s not analyzed: %s"
+            % (len(unanalyzed), len(entries),
+               "" if len(entries) == 1 else "s", share,
+               ", ".join(unanalyzed))]
+
+
 def _sig_line_count(lines, sym):
     """How many source lines the header spans (python multi-line defs)."""
     i = sym.line_start - 1
@@ -704,7 +868,7 @@ def _render_section(lines, title, items, width, collapse=None,
         lines.append("  %-*s  %s" % (width, text, ref))
 
 
-def render(label, entries, out, flags, notes, unanalyzed, budget):
+def render(label, entries, out, flags, notes, unanalyzed, counts, budget):
     def build(mech_count=False, strip_detail=False, counts_only=False,
               reduced=None):
         lines = ["codediff: %s (%d file%s)" % (label, len(entries),
@@ -720,11 +884,7 @@ def render(label, entries, out, flags, notes, unanalyzed, budget):
             _render_section(lines, SECTION_TITLES[sec], out[sec], width,
                             collapse=collapse,
                             strip_detail=strip_detail and sec == "behavior")
-        if unanalyzed:
-            lines += ["", "(%d file%s not analyzed: %s)"
-                      % (len(unanalyzed),
-                         "" if len(unanalyzed) == 1 else "s",
-                         ", ".join(unanalyzed))]
+        lines += _unanalyzed_note(unanalyzed, entries, counts)
         lines.append("")
         if flags:
             lines.append("Risk flags (%d)" % len(flags))
@@ -751,7 +911,7 @@ def render(label, entries, out, flags, notes, unanalyzed, budget):
     ], budget)
 
 
-def to_json(label, entries, out, flags, notes, unanalyzed):
+def to_json(label, entries, out, flags, notes, unanalyzed, counts):
     doc = {"target": label, "files": len(entries)}
     for sec in SECTION_ORDER:
         doc[sec] = [{"text": e["text"], "path": e["path"],
@@ -759,6 +919,15 @@ def to_json(label, entries, out, flags, notes, unanalyzed):
     doc["risk_flags"] = [{"text": f["text"], "path": f["path"],
                           "line": f["line"]} for f in flags]
     doc["unanalyzed"] = unanalyzed
+    # The narrator needs the summary's incompleteness as a number, not as
+    # a list it would have to weigh for itself.
+    total = sum(counts.get(e["path"], 0) for e in entries)
+    skipped = sum(counts.get(p, 0) for p in unanalyzed)
+    doc["unanalyzed_share"] = {
+        "files": len(unanalyzed), "total_files": len(entries),
+        "changed_lines": skipped, "total_changed_lines": total,
+        "percent_of_changed_lines": (round(100.0 * skipped / total)
+                                     if total else 0)}
     doc["notes"] = notes
     return json.dumps(doc, indent=1, sort_keys=True)
 
@@ -814,30 +983,47 @@ def main(argv=None):
 
         out = {sec: [] for sec in SECTION_ORDER}
         unanalyzed = []
+        # Untracked files never appear in numstat, so their lines would be
+        # missing from both halves of the share and quietly flatter it.
+        sizes = {}
         for entry in entries:
             before_path = entry["old"] or entry["path"]
             before_src = ("" if entry["status"] == "A"
                           else _content(before_rev, before_path, root))
             after_src = ("" if entry["status"] == "D"
                          else _content(after_rev, entry["path"], root))
+            sizes[entry["path"]] = (len(after_src.splitlines())
+                                    or len(before_src.splitlines()))
             lang = detect_language(entry["path"]) or \
                 detect_language(before_path)
-            if lang is None or "\0" in before_src or "\0" in after_src:
+            if "\0" in before_src or "\0" in after_src:
                 unanalyzed.append(entry["path"])
+                continue
+            if lang is None:
+                # Markdown gets a structural pass instead of a symbol one.
+                if _is_markdown(entry["path"]):
+                    analyze_markdown(entry, before_src, after_src, out)
+                else:
+                    unanalyzed.append(entry["path"])
                 continue
             analyze_file(entry, before_src, after_src, extract, lang, out)
         for sec in SECTION_ORDER:
             out[sec].sort(key=lambda e: (e["path"], e["line"], e["text"]))
 
+        counts = _changed_line_counts(before_rev, after_rev)
+        for path, n in sizes.items():
+            counts.setdefault(path, n)
         cfg = load_config(root)
         flags, notes = risk_flags(out, entries, root, cfg,
                                   args.no_update, args.repoindex)
 
         if args.as_json:
-            text = to_json(label, entries, out, flags, notes, unanalyzed)
+            text = to_json(label, entries, out, flags, notes,
+                           unanalyzed, counts)
         else:
             text = "\n".join(render(label, entries, out, flags, notes,
-                                    unanalyzed, max(0, args.max_tokens)))
+                                    unanalyzed, counts,
+                                    max(0, args.max_tokens)))
     except CodediffError as exc:
         print("codediff: %s" % exc, file=sys.stderr)
         return 2

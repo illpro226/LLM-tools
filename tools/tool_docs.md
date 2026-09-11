@@ -399,9 +399,19 @@ codediff --max-tokens N     # cap output; mechanical collapses first,
   body equality, not a fuzzy threshold (ADR-004)
 - **Behavior** — literal/default changes (`3 → 5`), conditional and call
   deltas
+- **Doc changes** — markdown read for structure, not prose (ADR-009):
+  sections added/removed, bodies moved (`body -3 lines`), and fenced code
+  changed (called out by name — a command in a README block is executable
+  content). A wholly new document collapses to one line.
 - **Removed** — deprecation markers noted
 - **Mechanical** — formatting/comment-only via Python AST-dump equality,
   import reshuffles; one line per file
+
+Whatever still can't be analyzed — binaries, unknown languages — is
+reported as a share of the change (`1 of 6 files, 4% of changed lines not
+analyzed`) rather than a trailing parenthetical, so the summary states how
+much of the diff it actually covers; `--json` carries the same figures as
+`unanalyzed_share`.
 
 **Risk** is a flat list of explainable flags — never a graded score
 (DECISIONS.md ADR-003, root `docs/decisions/0002`): sensitive-path keywords

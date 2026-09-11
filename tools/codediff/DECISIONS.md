@@ -126,3 +126,37 @@ variable so `test_outside_repo_errors` doesn't turn into a whole-home
 scan — but the knowledge lived only in the test, protecting the suite and
 not its users. A workaround in a test is a bug report you wrote down and
 filed against yourself.
+
+## ADR-009: Markdown gets a structural pass; unanalyzed is a share, not a footnote — Accepted (2026-09-11)
+
+Markdown has no symbols, so it was excluded from symbol analysis and
+listed in a trailing `(4 files not analyzed: ...)`. That is correct about
+markdown and wrong about the change: in a spec repo, an ADR set, or any
+commit where a README contract moves alongside the code, the doc *is* the
+artifact. The header promised `6 files`; the body covered two.
+
+Decision, in two parts:
+
+1. **Structure, not semantics.** Markdown is parsed for headings only —
+   which sections exist, whether a section's body moved, and whether its
+   fenced code changed. Fenced blocks are called out by name because a
+   command in a README or AGENTS.md block is executable content, and a
+   reader who copies a changed one is the concrete harm. No prose
+   summarization: that would need an LLM call, which ADR-002 forbids by
+   default, and would stop being deterministic.
+
+   A wholly new or deleted document collapses to one line, for ADR-006's
+   reason — a new file is one fact, and enumerating its every heading
+   would bury the real surface change.
+
+2. **The summary states its own incompleteness.** Whatever is still
+   unanalyzed (binaries, unknown languages) is reported as a share of the
+   whole change — files *and* percent of changed lines, from git's own
+   numstat — rather than as a parenthetical. A reader can see at a glance
+   whether the summary covers the change or 40% of it.
+
+Rejected: a `--docs` opt-in flag. The failure mode is an agent trusting a
+summary it does not know is partial, and an opt-in flag is only reached by
+someone who already suspects the gap.
+
+Closes `docs/known-issues/codediff-skips-markdown-so-doc-heavy-diffs-read-as-trivial.md`.

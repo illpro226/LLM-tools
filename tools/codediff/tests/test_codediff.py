@@ -352,3 +352,119 @@ def test_repo_below_the_ceiling_is_still_found(repo, monkeypatch):
     monkeypatch.chdir(sub)
     root = codediff._git("rev-parse", "--show-toplevel").strip()
     assert os.path.realpath(root) == os.path.realpath(str(repo))
+
+
+# --------------------------------------------------- markdown structure ---
+# docs/known-issues/codediff-skips-markdown-so-doc-heavy-diffs-read-as-trivial
+
+DOC_V1 = """\
+# Spec
+
+Intro line.
+
+## Layout
+
+Nine top-level entries.
+
+## Commands
+
+```bash
+make build
+```
+"""
+
+
+def _doc_repo(tmp_path, after, before=DOC_V1):
+    from conftest import base_repo
+    work = base_repo(tmp_path)
+    write(work, "SPEC.md", before)
+    g(work, "add", "-A")
+    g(work, "commit", "-m", "add spec")
+    write(work, "SPEC.md", after)
+    return work
+
+
+def test_markdown_body_change_lands_in_docs_not_unanalyzed(tmp_path):
+    repo = _doc_repo(tmp_path, DOC_V1.replace("Nine top-level",
+                                              "Thirteen top-level"))
+    doc = run_json(repo)
+    assert "SPEC.md" not in doc["unanalyzed"]
+    texts = [e["text"] for e in doc["docs"]]
+    assert any(t.startswith("~ Layout") and "body" in t for t in texts), texts
+
+
+def test_markdown_fenced_code_change_is_named(tmp_path):
+    repo = _doc_repo(tmp_path, DOC_V1.replace("make build", "make release"))
+    texts = [e["text"] for e in run_json(repo)["docs"]]
+    assert any("Commands" in t and "fenced code changed" in t
+               for t in texts), texts
+
+
+def test_markdown_added_and_removed_sections(tmp_path):
+    after = DOC_V1.replace("## Layout\n\nNine top-level entries.\n\n",
+                           "## Gotchas\n\nOne bullet.\n\n")
+    texts = [e["text"] for e in run_json(_doc_repo(tmp_path, after))["docs"]]
+    assert any(t.startswith("+ Gotchas") for t in texts), texts
+    assert any(t.startswith("- Layout") for t in texts), texts
+
+
+def test_markdown_new_document_collapses_to_one_line(tmp_path):
+    """A wholly new doc is one fact, like a new test file's count."""
+    from conftest import base_repo
+    work = base_repo(tmp_path)
+    write(work, "NEW.md", DOC_V1)
+    entries = [e for e in run_json(work)["docs"] if e["path"] == "NEW.md"]
+    assert len(entries) == 1, entries
+    assert entries[0]["text"] == "+ new document, 3 sections"
+
+
+def test_markdown_untouched_sections_are_silent(tmp_path):
+    repo = _doc_repo(tmp_path, DOC_V1.replace("Nine top-level",
+                                              "Thirteen top-level"))
+    texts = [e["text"] for e in run_json(repo)["docs"]]
+    assert not any("Commands" in t for t in texts), texts
+
+
+def test_markdown_whitespace_only_change_is_silent(tmp_path):
+    repo = _doc_repo(tmp_path, DOC_V1.replace("Intro line.",
+                                              "Intro line.   "))
+    assert [e["text"] for e in run_json(repo)["docs"]] == []
+
+
+def test_markdown_findings_carry_path_line(tmp_path):
+    repo = _doc_repo(tmp_path, DOC_V1.replace("Nine top-level",
+                                              "Thirteen top-level"))
+    for e in run_json(repo)["docs"]:
+        assert e["path"] and e["line"] >= 1
+
+
+def test_docs_section_rendered_with_its_own_heading(tmp_path):
+    repo = _doc_repo(tmp_path, DOC_V1.replace("Nine top-level",
+                                              "Thirteen top-level"))
+    proc = run(repo, "--max-tokens", "0")
+    assert proc.returncode == 0, proc.stderr
+    assert "Doc changes" in proc.stdout
+
+
+# ------------------------------------------- unanalyzed stated as a share ---
+
+def test_unanalyzed_note_reports_share_of_files(repo):
+    write(repo, "logo.bin", "\0\0\0binary\0\0\0")
+    proc = run(repo, "--max-tokens", "0")
+    assert re.search(r"\d+ of \d+ files.*not analyzed", proc.stdout), \
+        proc.stdout
+    assert "logo.bin" in proc.stdout
+
+
+def test_unanalyzed_share_in_json(repo):
+    write(repo, "logo.bin", "\0\0\0binary\0\0\0")
+    share = run_json(repo)["unanalyzed_share"]
+    assert share["files"] == 1
+    assert share["total_files"] > 1
+    assert 0 <= share["percent_of_changed_lines"] <= 100
+
+
+def test_no_unanalyzed_note_when_everything_analyzed(repo):
+    proc = run(repo, "--max-tokens", "0")
+    assert "not analyzed" not in proc.stdout
+    assert run_json(repo)["unanalyzed"] == []
