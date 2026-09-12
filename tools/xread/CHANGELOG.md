@@ -1,5 +1,21 @@
 # xread Changelog
 
+- 2026-09-11: v0.4.2 - `--symbol` and `--headings` now see module-level
+  constants in Python files, not just functions and classes. These are a
+  file's configuration surface - rule regexes, tunables, extension sets -
+  and the names an agent arrives with from a traceback or a grep hit, so
+  `--symbol _EXEC_QUOTED_RE` failing was the cheapest lookup missing at
+  exactly the moment it was wanted; the fallback was sgrep for a line
+  number plus a `--lines` range guessed wide enough to catch the whole
+  assignment. Spans cover a multi-line right-hand side and pull in an
+  attached comment above, the same way functions already do. Tuple
+  unpacking binds each name; annotated assignments are included. Top-level
+  only - locals, class attributes and attribute targets (`obj.x = 1`) are
+  excluded, since they are not API and would bury the outline. The JS/TS
+  scanner already picked up `const NAME = ...` by accident, so this also
+  closes an inconsistency between the two parsers.
+  See docs/known-issues/archive/xread-symbol-misses-module-level-constants.md.
+
 - 2026-09-11: v0.4.1 - a bare `xread FILE` with no mode flag now defaults to
   `--headings` instead of erroring, announcing the choice on stderr
   (`xread: no mode given, showing --headings`) so it stays discoverable.

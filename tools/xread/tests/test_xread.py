@@ -315,7 +315,11 @@ def test_headings_outlines_a_code_file(capsys):
     assert code == 0
     path = fx("sample.py")
     got = out.splitlines()
-    assert got[0] == "%s:8  function hypot [8-12]" % path
+    # Module-level constants lead the outline, in source order: they are
+    # part of "what's in this file" and, until v0.4.2, their absence here
+    # was the only hint a reader got that --symbol would fail on them.
+    assert got[0] == "%s:5  constant GREETING [5-5]" % path
+    assert "%s:8  function hypot [8-12]" % path in got
     assert "class Greeter [33-48]" in out
     # nesting is indentation, not a repeated qualified name
     assert "%s:36    function __init__ [36-37]" % path in got
@@ -515,3 +519,67 @@ def test_two_modes_still_rejected(capsys):
     with pytest.raises(SystemExit) as exc:
         run([fx("sample.py"), "--headings", "--query", "hypot"], capsys)
     assert exc.value.code == 2
+
+
+# --------------------------------------------- module-level constants (v0.4.2)
+
+def test_symbol_finds_module_level_constant(capsys):
+    """docs/known-issues/xread-symbol-misses-module-level-constants.md:
+    rule regexes and tunables are the names an agent arrives with."""
+    code, out, _ = run([fx("constants.py"), "--symbol", "SIMPLE"], capsys)
+    assert code == 0
+    assert 'SIMPLE = "one line"' in out
+
+
+def test_constant_span_covers_multiline_rhs_and_comment(capsys):
+    """A six-line regex is the case that motivated this; a span that stopped
+    at the first line would be worse than not finding it."""
+    code, out, _ = run([fx("constants.py"), "--symbol", "PATTERN"], capsys)
+    assert code == 0
+    assert "third alternative" in out          # last line of the RHS
+    assert "An attached comment belongs" in out  # comment pulled in above
+
+
+def test_annotated_assignment_is_found(capsys):
+    code, out, _ = run([fx("constants.py"), "--symbol", "ANNOTATED"], capsys)
+    assert code == 0
+    assert "ANNOTATED: int = 42" in out
+
+
+def test_tuple_unpacking_binds_each_name(capsys):
+    for name in ("LEFT", "RIGHT"):
+        code, out, _ = run([fx("constants.py"), "--symbol", name], capsys)
+        assert code == 0, name
+        assert 'LEFT, RIGHT = "l", "r"' in out
+
+
+def test_constants_appear_in_headings(capsys):
+    """The outline is how a reader learns the name exists at all."""
+    _, out, _ = run([fx("constants.py"), "--headings"], capsys)
+    assert "constant SIMPLE" in out
+    assert "constant PATTERN" in out
+    assert "constant EXTS" in out
+
+
+def test_local_and_class_and_attribute_bindings_excluded(capsys):
+    """Top-level only: locals aren't API, and collecting them buries the
+    outline. An attribute target binds no new module-level name."""
+    _, out, _ = run([fx("constants.py"), "--headings"], capsys)
+    assert "LOCAL" not in out
+    assert "CLASS_LEVEL" not in out
+    assert "injected" not in out
+    for name in ("LOCAL", "CLASS_LEVEL"):
+        code, _, err = run([fx("constants.py"), "--symbol", name], capsys)
+        assert code != 0, name
+        assert "symbol not found" in err
+
+
+def test_constants_do_not_shadow_functions(capsys):
+    """Adding a kind must not disturb the existing outline ordering."""
+    _, out, _ = run([fx("constants.py"), "--headings"], capsys)
+    lines = out.splitlines()
+    assert any("class Holder" in l for l in lines)
+    assert any("function fn" in l for l in lines)
+    kinds = [l.split()[1] for l in lines if len(l.split()) > 1]
+    assert kinds[0] == "constant"   # source order: SIMPLE is line 5
+    assert "class" in kinds and "function" in kinds

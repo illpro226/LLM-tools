@@ -1,6 +1,6 @@
 # xread Status
 
-Implemented (v0.4.1) and passing tests. A call with no mode flag defaults to
+Implemented (v0.4.2) and passing tests. A call with no mode flag defaults to
 `--headings` (v0.4.1) rather than erroring.
 
 - `xread.py` — single-file CLI covering all PRD modes plus the markdown mode

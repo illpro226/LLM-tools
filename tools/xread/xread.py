@@ -4,8 +4,10 @@
 Prints just the relevant parts of a file instead of the whole thing:
 
     xread FILE --symbol NAME        full body of a function/class/method
-                                    (nested names like ClassName.method);
-                                    on markdown files, a heading's section
+                                    (nested names like ClassName.method),
+                                    or a module-level constant with its
+                                    full right-hand side; on markdown
+                                    files, a heading's section
     xread FILE --lines A-B          a line range; --scope expands it to the
                                     enclosing function/class
     xread FILE --query "text"       the top keyword-scoring blocks
@@ -33,7 +35,7 @@ import os
 import re
 import sys
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 
 PY_EXTS = {".py", ".pyi"}
 TS_EXTS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"}
@@ -72,6 +74,24 @@ def _extend_comments(lines, start, prefixes):
     return start
 
 
+def _assigned_names(target):
+    """Names bound by an assignment target, unpacking tuples and lists.
+
+    `A, B = 1, 2` binds both, so both should be findable; attribute and
+    subscript targets (`obj.x = 1`, `d["k"] = 1`) bind no new module-level
+    name and are skipped.
+    """
+    import ast
+    if isinstance(target, ast.Name):
+        return [target.id]
+    if isinstance(target, (ast.Tuple, ast.List)):
+        names = []
+        for elt in target.elts:
+            names.extend(_assigned_names(elt))
+        return names
+    return []
+
+
 def parse_python(source, lines):
     import ast
     symbols = []
@@ -92,6 +112,25 @@ def parse_python(source, lines):
                                 "end": child.end_lineno,
                                 "top": prefix == ""})
                 visit(child, qual + ".")
+            elif prefix == "" and isinstance(child, (ast.Assign,
+                                                     ast.AnnAssign)):
+                # Module-level bindings are the configuration surface of a
+                # file — rule regexes, tunables, extension sets — and the
+                # names an agent arrives with from a traceback or a grep
+                # hit. Without them `--symbol NAME` fails on exactly the
+                # lookup it should be cheapest at. Top-level only: names
+                # bound inside a function are locals, not API, and would
+                # bury the outline. See docs/known-issues/
+                # xread-symbol-misses-module-level-constants.md.
+                targets = ([child.target] if isinstance(child, ast.AnnAssign)
+                           else child.targets)
+                for tgt in targets:
+                    for name in _assigned_names(tgt):
+                        start = _extend_comments(lines, child.lineno, ("#",))
+                        symbols.append({"name": name, "qual": name,
+                                        "kind": "constant", "start": start,
+                                        "end": child.end_lineno,
+                                        "top": True})
 
     try:
         visit(ast.parse(source), "")
