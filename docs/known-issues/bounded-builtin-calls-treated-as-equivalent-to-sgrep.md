@@ -1,6 +1,19 @@
 # agent treats a guard-hook-*allowed* bounded Grep/Read call as equivalent to using sgrep/xread, when the output shape is still worse
 
-**STATUS at filing: open.**
+**STATUS at filing: open.** **Update 2026-09-11: still open; instrumented,
+not yet fixed.** The recommended nudge was deliberately *not* added yet. This
+issue's diagnosis rests on the agent's judgment being unreliable under task
+pressure - a claim measured under one model. Adding a permanent per-session
+nudge to fix a behavior that may no longer reproduce is the same mistake
+docs/decisions/0009 made in the other direction (see the memory note
+`adoption-is-model-dependent`). So the guard hook now *logs* every Grep call
+the carve-out lets through - `.savings/carveout-passes.jsonl`, with kind
+(`head_limit` / `single_file`), session id and model - and savings events
+carry a session id, so a carve-out pass can be correlated with whether an
+`sgrep` call followed in the same session. Silent: no deny, no message, so
+the logging does not itself alter the behavior being measured. Read that log
+before adding the nudge; if narrowed-Grep-instead-of-sgrep no longer appears
+under the current model, close this instead of fixing it.
 
 - **What broke:** during the same 2026-08-23 session covered in
   [`guard-hook-python-m-json-tool-bypasses-structo-redirect.md`](guard-hook-python-m-json-tool-bypasses-structo-redirect.md),
