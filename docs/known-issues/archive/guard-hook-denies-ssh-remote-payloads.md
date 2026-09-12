@@ -60,3 +60,24 @@ exemption might key on the remote command being a script invocation
 workaround already does by hand. Filing it as recorded friction rather
 than a fix request — three denials in one session, all of them correct
 by the letter of the rule and all of them costing a round trip.
+
+## 2026-09-11: third look — still WONTFIX, but the deny message now helps
+
+Hit again, in a narrower form than the two re-evaluations above: the
+vocabulary was inside a *Python string literal* in an `ssh host 'python3 -c
+"..."'` payload — inert data, executed on neither host. That looks like it
+should be separable from the "remote pipeline might be expensive" case, and
+it isn't: masking string literals inside an interpreter body would mask
+`os.system("git log")` exactly as well as an inert one, so the same
+data-vs-command wall applies one level down. No policy change.
+
+What did change is the message. `deny_shell` now appends a note whenever
+`_EXEC_QUOTED_RE` matches, saying that text inside an executed payload reads
+as a command even when inert, and naming the workaround (ship it as a file,
+`scp`, `ssh host 'python3 /tmp/x.py'`). Previously the reader got the
+generic "use sgrep/gitbrief" redirect, which is the wrong advice for this
+case — the deny text is the mechanism that reliably changes behaviour
+(`agent-defaults-to-builtins-mid-task`), so pointing it at the actual
+remedy is the cheap half of this that *was* available. Verdicts are
+unchanged: 89/89 corpus cases, zero flips against the pre-change hook.
+
