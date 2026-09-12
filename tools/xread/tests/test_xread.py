@@ -477,3 +477,41 @@ def test_small_excerpt_is_untouched_by_the_default(tmp_path, capsys):
     _, unbounded, _ = run(
         [str(small), "--symbol", "f", "--max-tokens", "0"], capsys)
     assert deflt == unbounded
+
+
+# ------------------------------------------------- default mode (no flag)
+
+def test_no_mode_defaults_to_headings(capsys):
+    """A bare `xread FILE` outlines the file instead of erroring.
+
+    docs/known-issues/xread-bare-file-call-errors-instead-of-defaulting.md:
+    naming a file is the first call a reader makes, before they have a
+    symbol name to ask for.
+    """
+    bare_code, bare_out, bare_err = run([fx("sample.py")], capsys)
+    flag_code, flag_out, _ = run([fx("sample.py"), "--headings"], capsys)
+    assert bare_code == 0
+    assert bare_out == flag_out
+    assert "no mode given" in bare_err
+
+
+def test_no_mode_announces_on_stderr_not_stdout(capsys):
+    """The notice must not pollute the budgeted payload."""
+    _, out, err = run([fx("sample.py")], capsys)
+    assert "no mode given" not in out
+    assert "no mode given, showing --headings" in err
+
+
+def test_no_mode_respects_max_tokens(capsys):
+    """The default is a real mode, budget included - not an escape hatch."""
+    code, out, _ = run([fx("sample.py"), "--max-tokens", "0"], capsys)
+    assert code == 0
+    assert out.strip()
+
+
+def test_two_modes_still_rejected(capsys):
+    """Defaulting when none is given must not relax mutual exclusion."""
+    import pytest
+    with pytest.raises(SystemExit) as exc:
+        run([fx("sample.py"), "--headings", "--query", "hypot"], capsys)
+    assert exc.value.code == 2

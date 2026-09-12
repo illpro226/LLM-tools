@@ -12,6 +12,9 @@ Prints just the relevant parts of a file instead of the whole thing:
     xread FILE --headings           outline of one file: markdown headings,
                                     or the symbols of a code file with their
                                     spans (the names --symbol takes)
+    xread FILE                      no mode given: defaults to --headings,
+                                    the cheap first look at a file whose
+                                    symbol names you don't know yet
 
 Every excerpt starts with a citable `== path:start-end ==` header; elision
 markers appear between non-adjacent excerpts. All modes accept multiple
@@ -30,7 +33,7 @@ import os
 import re
 import sys
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 PY_EXTS = {".py", ".pyi"}
 TS_EXTS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"}
@@ -628,9 +631,19 @@ def main(argv=None):
 
     modes = [bool(args.symbol), bool(args.lines), bool(args.query),
              args.headings]
-    if sum(modes) != 1:
-        parser.error("exactly one of --symbol, --lines, --query, "
-                     "--headings is required")
+    if sum(modes) > 1:
+        parser.error("at most one of --symbol, --lines, --query, "
+                     "--headings may be given")
+    if sum(modes) == 0:
+        # Naming a file and asking to see it is the most natural first call,
+        # and it is the one a reader makes before they have a symbol name to
+        # ask for. Erroring there spends a round-trip to teach what the
+        # outline would have shown; --headings is the bounded answer to that
+        # request, so make it the default and say so rather than refusing.
+        # See docs/known-issues/xread-bare-file-call-errors-instead-of-
+        # defaulting.md.
+        args.headings = True
+        sys.stderr.write("xread: no mode given, showing --headings\n")
 
     try:
         files = load(args.paths)

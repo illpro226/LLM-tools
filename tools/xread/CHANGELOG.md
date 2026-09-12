@@ -1,5 +1,18 @@
 # xread Changelog
 
+- 2026-09-11: v0.4.1 - a bare `xread FILE` with no mode flag now defaults to
+  `--headings` instead of erroring, announcing the choice on stderr
+  (`xread: no mode given, showing --headings`) so it stays discoverable.
+  Naming a file and asking to see it is the first call a reader makes -
+  before they have a symbol name to ask for - and it was the one call that
+  returned usage text instead of content, costing a round-trip to learn
+  what the outline would have shown. `--headings` is the bounded answer to
+  that request, and the root CLAUDE.md already calls it "the cheap first
+  move on an unfamiliar file", so the guidance named the default the CLI
+  didn't implement. Mutual exclusion among explicit modes is unchanged: two
+  modes is still an error, now worded "at most one ... may be given".
+  See docs/known-issues/xread-bare-file-call-errors-instead-of-defaulting.md.
+
 - 2026-08-06: v0.4.0 - `--headings` outlines code files, not just markdown.
   It prints one line per symbol with its kind and span
   (`sgrep.py:217  function render [217-265]`), nesting carried by

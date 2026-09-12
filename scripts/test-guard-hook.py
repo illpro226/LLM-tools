@@ -146,6 +146,25 @@ CORPUS = [
     ("git log -1", "Bash", "ALLOW", "bounded log", None),
     ("git log --oneline -5", "Bash", "ALLOW", "oneline with small count", None),
     ("git diff --stat", "Bash", "ALLOW", "summary-only diff", None),
+    # --- git output that provably cannot reach context ---------------------
+    # docs/known-issues/archive/guard-hook-git-log-ignores-bounding-pipe.md:
+    # the git branch scoped args with SEP_RE, which splits on a single `|`,
+    # so the bounding pipe was cut off before it could be seen. These flip
+    # DENY -> ALLOW deliberately, on the same rule the grep/cat/range-read
+    # branches already applied.
+    ("git log --oneline origin/main..HEAD | head", "Bash", "ALLOW",
+     "log bounded by a pipe into head", "loosen"),
+    ("git log --oneline | head -5", "Bash", "ALLOW",
+     "log bounded by head with a count", "loosen"),
+    ("git log | wc -l", "Bash", "ALLOW", "log counted, not printed", "loosen"),
+    ("git diff | head -20", "Bash", "ALLOW",
+     "diff bounded by a pipe into head", "loosen"),
+    ("git diff > /tmp/patch.txt", "Bash", "ALLOW",
+     "diff redirected to a file costs no tokens", "loosen"),
+    ("git log --oneline", "Bash", "DENY",
+     "oneline with no count and no bounding pipe", None),
+    ("git log | head; git diff", "Bash", "DENY",
+     "bound applies per command, not across the chain", None),
     ("rg -n needle src > /tmp/out.txt", "Bash", "ALLOW", "redirected search", None),
     ("rg -n needle src | head -5", "Bash", "ALLOW", "bounded search", None),
     ("rg -n needle src | wc -l", "Bash", "ALLOW", "counted search", None),
