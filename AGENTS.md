@@ -1,73 +1,80 @@
 # AGENTS.md — LLM-tools
 
-LLM-tools is a suite of small CLI utilities that let a coding agent spend
-fewer tokens per task: never put raw, bulky content into context when a
-compressed, targeted view will do. Nine tools are live; `rq` and `testmap`
-were built, then archived for never being reached for (docs/decisions/0009)
-and now live in `archive/`. `START.md` describes each tool; `INVARIANTS.md` holds the rules
-every tool must keep; each tool lives in `tools/<name>/` with its own
-docs (`STATUS.md`, `CHANGELOG.md`, `DECISIONS.md`) and `tests/`.
+A suite of small CLI utilities that let a coding agent spend fewer tokens per
+task: never put raw, bulky content into context when a compressed, targeted view
+will do. Nine tools are live; `rq` and `testmap` were built, then archived for
+never being reached for (`docs/decisions/0009`).
 
-## Use these tools instead of built-ins
+## Routing table — read only what the task needs
 
-The section below is self-contained — copy it into any project's
-AGENTS.md (or your agent's global instructions) to adopt the suite there.
-
-The tools are on PATH via the shims in `bin/` — `.cmd` for
-cmd/PowerShell, extensionless `sh` scripts for Git Bash/WSL/POSIX
-(new shells only). If a name isn't recognized, call the shim by full
-path or run `python tools/<name>/<name>.py` from this repo.
-
-| Instead of | Use | Example |
+| If the task is… | Read | Do not read |
 |---|---|---|
-| Reading a whole file for one function or section | `xread` | `xread app.py --symbol Login.validate`, `xread doc.md --headings`, then `--query "text"` or `--lines 40-80 --scope` |
-| `ls -R` / reading many files to get oriented | `repomap` | `repomap . --focus src/auth` |
-| Raw `grep`/`rg` dumps | `sgrep` (needs `rg` on PATH) | `sgrep "retry" src --counts-only` |
-| Running a build/test and reading the full log | `runlite` | `runlite -- python -m pytest -q` |
-| `cat` on JSON/YAML/TOML/JSONL/XML/CSV/logs | `structo` | `structo data.json --path items[0]` |
-| Raw `git diff` / `git log` / `git status` | `gitbrief` | `gitbrief`, `gitbrief hunks`, `gitbrief show FILE`, `gitbrief log`, `gitbrief pr main` |
-| Re-reading hunks to judge what a change means | `codediff` | `codediff --staged` (API/behavior/removed/mechanical + risk flags) |
-| Grepping for call sites and relationships | `sgrep` | `sgrep "LoginManager" --counts-only`, then narrow |
-| Guessing what is cheap or expensive to read | `tokq` | `tokq FILE`, `tokq dir .`, `tokq lint docs\` |
+| A tool's quirks, exit codes, defaults, env vars | `docs/reference/REF-tool-gotchas.md` | the tool's source first |
+| Making another project use the suite | `docs/reference/REF-adopt-the-suite.md` (the copy-paste block) | this file |
+| A rule that holds across every tool | `INVARIANTS.md` | any single tool |
+| "Why is it like this?" — suite-wide | `docs/decisions/` (binding) | git history |
+| "Why is it like this?" — one tool | `tools/<name>/DECISIONS.md` | `docs/decisions/` |
+| What a tool does today, and its test count | `tools/<name>/STATUS.md` (the authority) | `START.md` |
+| Current state of the suite | `STATUS.md` | `CHANGELOG.md` |
+| A tool that misbehaved | `docs/known-issues/` — file it there | — |
+| What each tool was originally for | `START.md` (historical, not current) | — |
 
-Shared behavior you can rely on: output is plain, deterministic text
-meant to be read by an LLM; every claim line carries a `path:line` you
-can follow up with `xread`; every tool accepts `--max-tokens N` and
-degrades by summarizing harder, never truncating mid-thought (budgets are
-on by default; `--max-tokens 0` is the escape hatch). `codediff` reads the
-shared `.repoindex/index.db` for test-coverage flags when one exists, and
-runs without it, saying what is missing — build it with `repoindex build`
-if you want those flags. Confidence in index-backed answers is two-valued —
-`resolved` or `heuristic` — treat heuristic edges as leads, not facts.
-Caveats: `sgrep` errors clearly if `rg` is absent; `tokq` falls back to
-a bytes-based estimate without `tiktoken` and says so.
+`doc/` is a compatibility alias for `docs/` — put new documentation in `docs/`,
+and keep doc links repo-relative.
 
-## Working in this repo
+## Commands
 
-- Dogfood the suite while working here; it is the field test fixtures
-  can't provide. When a built-in was genuinely easier or a tool's output
-  missed what you needed, file it in `docs/known-issues/` (one file per
-  issue: what breaks, when, expected, workaround).
-- Each tool is self-contained: `cd tools\<name>` then `python -m pytest`.
-  All are stdlib-only Python; every tool except `repoindex` (a package)
-  is a single file.
-- A change to a tool's behavior updates its `CHANGELOG.md` and
-  `STATUS.md` (version, test count) in the same commit; cross-tool rules
-  live in `INVARIANTS.md`, and breaking one needs a decision record in
-  `docs/decisions/`, not just a PR. `STATUS.md` is the only place a test
-  count is stated, so there is nothing to keep in sync.
-- `tokq lint`/`tokq dir` when deciding what to cut from a document or
-  hunting where token weight lives — not a finishing ritual on every edit.
+```
+setup:  (none — stdlib-only Python, no install step; there is no linter)
+test:   python -m pytest tools/xread
+status: python scripts/check_status.py .
+env:    python scripts/check_env.py .
+```
 
-## Style, tests, commits
+No repo-wide build system: `cd tools/<name>` then `python -m pytest`, and
+archived tools the same way from `archive/rq/` and `archive/testmap/`. `--help`
+carries the current flags, so they are not restated anywhere.
 
-- Keep output deterministic: stable ordering, no ANSI color, no
-  timestamps in normal output; support `--max-tokens` on anything that
-  can grow (see `INVARIANTS.md` for the full list).
-- Tests are fixture-based and assert real command output; name them
-  after behavior; cover cap/degrade paths and determinism.
-- Commit subjects are short and imperative, e.g.
+## Environment — what a cold agent would otherwise have to discover
+
+- Toolchain: `python` and `git`. `rg` is needed at runtime by `sgrep` only.
+- All tools are stdlib-only Python, single-file except `repoindex` (a package).
+- Three environment variables exist and none is a secret: `SGREP_RG`,
+  `GITBRIEF_NO_CEILING`, `CODEDIFF_NO_CEILING`. **Nothing loads a `.env`** and
+  there is deliberately no `.env.example` — see `docs/decisions/0010`.
+- The tools are on PATH via shims in `bin/` — `.cmd` for cmd/PowerShell,
+  extensionless `sh` for Git Bash/WSL (new shells only). If a name is not
+  recognised, run `python tools/<name>/<name>.py` from this repo.
+- **The remote is public.** `github.com/illpro226/LLM-tools`, public since
+  2026-08-07 — treat anything committed here as published.
+
+## Boundaries
+
+- **The build list is closed** (`docs/decisions/0003`): no Wave 5, and
+  `factbook`/`docsnip` are deferred indefinitely, revivable only on recorded
+  dogfooding evidence.
+- **Breaking an invariant needs a decision record**, not just a PR.
+  `INVARIANTS.md` holds the suite-wide rules — output, semantics, performance,
+  docs — and is the authority; do not restate them elsewhere.
+- A change to a tool's behaviour updates its `CHANGELOG.md` and `STATUS.md`
+  (version, test count) **in the same commit**. `STATUS.md` is the only place a
+  test count is stated, so there is nothing to keep in sync.
+- One directory per tool, `tools/<name>/`, each a standalone CLI installable on
+  PATH. Prefer Python or Go, minimal deps, ~100ms startup. Never commit
+  `.repoindex/` or other rebuildable state. `docs/decisions/` is append-only.
+
+## Done means
+
+The tool was actually run and its real output shown, and its own `pytest` suite
+passed. Cap and degrade paths count as behaviour: a change that can grow output
+is not done until a bounded run is in the evidence.
+
+## Gotchas
+
+- **Dogfood the suite while working here.** It is the field test fixtures cannot
+  provide. When a built-in was genuinely easier, or a tool's output missed what
+  you needed, file it in `docs/known-issues/` — that friction is the feedback
+  that archived two working tools (`0009`), and any revival would need it.
+- Commit subjects are short and imperative:
   `fix xread --query markdown section swallowing (xread v0.1.1)`.
-- PRs note the commands run for verification and any new flags or
-  generated artifacts. Never commit `.repoindex/` or other rebuildable
-  state.
+- PRs note the commands run for verification, and any new flags or artifacts.
