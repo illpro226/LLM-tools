@@ -33,7 +33,7 @@ Implemented (v0.3.0) and passing tests.
   `--max-tokens 0` restores unbounded output.
 - git discovery is bounded by `GIT_CEILING_DIRECTORIES`, defaulted to
   `$HOME` (ADR-007); `GITBRIEF_NO_CEILING=1` overrides.
-- Tests: `tests/test_gitbrief.py` (35 tests) against temp repos scripted
+- Tests: `tests/test_gitbrief.py` (36 tests) against temp repos scripted
   by the suite (upstream drift via a local bare remote, staged + unstaged
   + untracked with exact counts, feature branch with known symbol edits);
   host git config is neutralized. A repo-state snapshot asserts every

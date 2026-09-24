@@ -445,3 +445,22 @@ def test_pr_batched_reads_match_per_file_reads(pr_repo, monkeypatch):
     for path in ("a.py", "web.ts", "data.csv"):
         assert ranges[path] == gitbrief._changed_ranges(base, path)
     assert "no-such-file.py" not in ranges
+
+
+def test_ts_symbols_count_code_after_a_closing_template_backtick():
+    """The line closing a multi-line template was skipped whole; its `{`
+    never opened, and a nested function after it read as top-level."""
+    src = ("export function first() {\n"
+           "  const q = sql(`SELECT *\n"
+           "    FROM t`).then((r) => {\n"
+           "    return r;\n"
+           "  });\n"
+           "  function inner() { return q; }\n"
+           "  return inner();\n"
+           "}\n"
+           "export function second() {\n"
+           "  return 2;\n"
+           "}\n")
+    syms = gitbrief._ts_symbols(src)
+    assert [(s["name"], s["start"], s["end"]) for s in syms] == [
+        ("first", 1, 8), ("second", 9, 11)]

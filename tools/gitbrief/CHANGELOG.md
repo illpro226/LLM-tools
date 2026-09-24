@@ -24,7 +24,7 @@
   Its Python scan also sees defs under module-level `if`/`try`/`with`, a
   BOM no longer turns a file's symbols into none, and the JS/TS scan
   counts code after a multi-line template's closing backtick.
-  5 new tests (35 total).
+  6 new tests (36 total).
 - 2026-07-31: v0.2.1 — git repository discovery is bounded by
   `GIT_CEILING_DIRECTORIES`, defaulted to `$HOME` (ADR-007). Without it, a
   run outside any project walked up to a home directory that is itself a
