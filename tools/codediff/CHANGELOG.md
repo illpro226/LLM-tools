@@ -1,5 +1,27 @@
 # codediff Changelog
 
+- 2026-09-24: v0.5.0 — fixes from a suite review, each pinned by a test
+  that fails on v0.4.0.
+  **A body edit was reported as a changed default.** Python signatures were
+  cut at the first `#`, string or not, so `def paint(color="#fff"):` lost
+  its closing paren, the "signature" ran on into the body, and changing
+  `x = 1` to `x = 2` printed `~ paint()  default 1 → 2` — a false API
+  claim. Comments are now stripped outside string literals only, and paren
+  depth and the closing colon are read from a string-blanked skeleton.
+  **A UTF-8 BOM hid every change in a file.** `ast.parse` rejects U+FEFF,
+  so both sides parsed to no symbols and a real edit summarized as
+  nothing. Worktree reads use `utf-8-sig` and blob reads drop the mark.
+  **The floor was O(files).** Every unanalyzed file was named at every
+  rung, so 300 changed assets kept the output over any budget; reduced
+  rungs now name 5 and count the rest.
+  **`test/` and `__tests__/` were source.** Only `tests/` marked a test
+  directory, so jest (`__tests__`) and mocha/Maven (`test/`) suites were
+  analyzed as behaviour changes and raised coverage flags against
+  themselves.
+  Also: the implicit `repoindex update` capture pins utf-8 (INVARIANTS: a
+  non-ASCII path in its output could raise `UnicodeDecodeError` there);
+  `diff.relative` is pinned off like gitbrief; a modified file is extracted
+  once instead of twice. 5 new tests (54 total).
 - 2026-09-11: v0.4.0 — new `Doc changes` section: markdown files get a
   structural pass (headings added/removed, bodies moved, fenced code
   changed) instead of falling out as "not analyzed" (ADR-009). Whatever

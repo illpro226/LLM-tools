@@ -44,7 +44,7 @@ try:
 except ImportError:  # pragma: no cover - Python < 3.11
     tomllib = None
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 # ADR-007: the token cap is on by default. A pre-commit summary is read
 # while the context already holds the work that produced the diff, so it
@@ -123,8 +123,11 @@ def _git_env():
 
 def _git(*args, ok_codes=(0,)):
     """Run one read-only git command; every call is a reproducible argv."""
+    # diff.relative would re-root and restrict every diff to the cwd, and
+    # paths here are joined to the toplevel (gitbrief pins the same).
     argv = ["git", "--no-optional-locks", "--no-pager",
-            "-c", "color.ui=false", "-c", "core.quotepath=false", *args]
+            "-c", "color.ui=false", "-c", "core.quotepath=false",
+            "-c", "diff.relative=false", *args]
     try:
         proc = subprocess.run(argv, capture_output=True, text=True,
                               encoding="utf-8", errors="replace",
@@ -254,13 +257,15 @@ def _content(rev, path, root):
     if rev is None:
         try:
             with open(os.path.join(root, path.replace("/", os.sep)),
-                      "r", encoding="utf-8", errors="replace") as fh:
+                      "r", encoding="utf-8-sig", errors="replace") as fh:
                 return fh.read()
         except OSError:
             return ""
-    if rev == ":0":
-        return _git("show", ":%s" % path, ok_codes=(0, 128))
-    return _git("show", "%s:%s" % (rev, path), ok_codes=(0, 128))
+    spec = ":%s" % path if rev == ":0" else "%s:%s" % (rev, path)
+    out = _git("show", spec, ok_codes=(0, 128))
+    # A byte-order mark is U+FEFF to ast.parse: both sides failed to parse,
+    # every symbol vanished, and a real change summarized as nothing.
+    return out[1:] if out.startswith("﻿") else out
 
 
 # ------------------------------------------------------ symbol analysis ---
@@ -277,6 +282,35 @@ def _norm(body_lines):
     return [l.strip() for l in body_lines if l.strip()]
 
 
+def _py_code(line):
+    """(text, skeleton) of one Python line: the line minus its comment, and
+    that with string-literal contents removed. Splitting on a bare `#` cut
+    `def paint(color="#fff"):` at the quote, the parens never balanced, and
+    the "signature" ran on into the body — so a body edit was reported as a
+    changed default."""
+    text, skel, quote, i = [], [], None, 0
+    while i < len(line):
+        ch = line[i]
+        if quote:
+            text.append(ch)
+            if ch == "\\" and i + 1 < len(line):
+                text.append(line[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+                skel.append(ch)
+        elif ch == "#":
+            break
+        else:
+            text.append(ch)
+            skel.append(ch)
+            if ch in "'\"":
+                quote = ch
+        i += 1
+    return "".join(text).rstrip(), "".join(skel).rstrip()
+
+
 def _signature(lines, sym, lang):
     """Header text of a symbol, from source the tool already holds (the
     index stores no signatures -- rq ADR-006). Heuristic by design."""
@@ -286,10 +320,10 @@ def _signature(lines, sym, lang):
     if lang == "python":
         parts, depth = [], 0
         for j in range(i, min(i + 10, len(lines))):
-            line = lines[j].split("#")[0].rstrip()
+            line, skel = _py_code(lines[j])
             parts.append(line.strip())
-            depth += line.count("(") - line.count(")")
-            if depth <= 0 and line.endswith(":"):
+            depth += skel.count("(") - skel.count(")")
+            if depth <= 0 and skel.endswith(":"):
                 break
         return " ".join(p for p in parts if p)
     return lines[i].split("{")[0].strip()
@@ -458,18 +492,16 @@ def analyze_file(entry, before_src, after_src, extract, lang, out):
         add("mechanical", "file renamed from %s" % entry["old"], 1)
         if _norm(before_src.splitlines()) == _norm(after_src.splitlines()):
             return
+    # Same path label on both sides so qualnames join (repoindex ADR-006:
+    # deterministic qualnames are the before/after key). Extracted once:
+    # the mechanical check used to parse both sides and then throw them away.
+    ef_b = extract(path, before_src, lang)
+    ef_a = extract(path, after_src, lang)
     if entry["status"] == "M":
-        kind = _mechanical_kind(before_src, after_src,
-                                extract(path, before_src, lang),
-                                extract(path, after_src, lang), lang)
+        kind = _mechanical_kind(before_src, after_src, ef_b, ef_a, lang)
         if kind:
             add("mechanical", kind, 1)
             return
-
-    # Same path label on both sides so qualnames join (repoindex ADR-006:
-    # deterministic qualnames are the before/after key).
-    ef_b = extract(path, before_src, lang)
-    ef_a = extract(path, after_src, lang)
     b_lines = before_src.splitlines()
     a_lines = after_src.splitlines()
     before = {_local(s.qualname): s for s in ef_b.symbols}
@@ -690,12 +722,14 @@ def _changed_line_counts(before_rev, after_rev):
     return counts
 
 
-def _unanalyzed_note(unanalyzed, entries, counts):
+def _unanalyzed_note(unanalyzed, entries, counts, max_names=None):
     """The 'not analyzed' line, stated as a share of the whole change.
 
     A trailing parenthetical listing four filenames reads as a footnote;
     '4 of 6 files, 61% of changed lines' states the summary's own
-    incompleteness, which is the thing the reader needs.
+    incompleteness, which is the thing the reader needs. `max_names` caps
+    the list on reduced rungs: named in full, a diff of 3,000 assets or
+    generated files kept the floor O(files) and the budget unreachable.
     """
     if not unanalyzed:
         return []
@@ -705,10 +739,13 @@ def _unanalyzed_note(unanalyzed, entries, counts):
     if total_lines and skipped_lines:
         share = ", %d%% of changed lines" % round(
             100.0 * skipped_lines / total_lines)
+    names = ", ".join(unanalyzed)
+    if max_names is not None and len(unanalyzed) > max_names:
+        names = ", ".join(unanalyzed[:max_names]) + ", … (+%d more)" % (
+            len(unanalyzed) - max_names)
     return ["", "%d of %d file%s%s not analyzed: %s"
             % (len(unanalyzed), len(entries),
-               "" if len(entries) == 1 else "s", share,
-               ", ".join(unanalyzed))]
+               "" if len(entries) == 1 else "s", share, names)]
 
 
 def _sig_line_count(lines, sym):
@@ -716,9 +753,9 @@ def _sig_line_count(lines, sym):
     i = sym.line_start - 1
     depth = 0
     for j in range(i, min(i + 10, len(lines))):
-        line = lines[j].split("#")[0].rstrip()
-        depth += line.count("(") - line.count(")")
-        if depth <= 0 and line.endswith(":"):
+        skel = _py_code(lines[j])[1]
+        depth += skel.count("(") - skel.count(")")
+        if depth <= 0 and skel.endswith(":"):
             return j - i + 1
     return 1
 
@@ -761,16 +798,27 @@ def ensure_fresh(root, repoindex_cmd=None):
         if not os.path.isfile(sibling):
             return False
         argv = [sys.executable, sibling, "--root", root, "update"]
-    proc = subprocess.run(argv, capture_output=True, text=True)
+    # Pinned like every other capture (INVARIANTS.md): decoded with the
+    # console default, a non-ASCII path in repoindex's output raised
+    # UnicodeDecodeError here, inside a flag the caller never asked about.
+    proc = subprocess.run(argv, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
     return proc.returncode == 0
+
+
+_TEST_DIRS = {"tests", "test", "__tests__"}
 
 
 def _is_test_path(path):
     base = os.path.basename(path)
+    # `test/` (mocha, Maven's src/test) and `__tests__/` (jest's default)
+    # hold tests whatever their files are called; only `tests/` counted,
+    # so their suites were analyzed as source and flagged as untested.
+    dirs = path.replace(os.sep, "/").split("/")[:-1]
     return (base.startswith("test_") or base.endswith("_test.py")
             or ".test." in base or ".spec." in base
             or base.endswith("_test.go")
-            or "/tests/" in "/" + path.replace(os.sep, "/"))
+            or any(d in _TEST_DIRS for d in dirs))
 
 
 def risk_flags(out, entries, root, cfg, no_update, repoindex_cmd):
@@ -884,7 +932,8 @@ def render(label, entries, out, flags, notes, unanalyzed, counts, budget):
             _render_section(lines, SECTION_TITLES[sec], out[sec], width,
                             collapse=collapse,
                             strip_detail=strip_detail and sec == "behavior")
-        lines += _unanalyzed_note(unanalyzed, entries, counts)
+        lines += _unanalyzed_note(unanalyzed, entries, counts,
+                                  max_names=5 if reduced else None)
         lines.append("")
         if flags:
             lines.append("Risk flags (%d)" % len(flags))

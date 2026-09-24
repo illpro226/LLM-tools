@@ -468,3 +468,83 @@ def test_no_unanalyzed_note_when_everything_analyzed(repo):
     proc = run(repo, "--max-tokens", "0")
     assert "not analyzed" not in proc.stdout
     assert run_json(repo)["unanalyzed"] == []
+
+
+# ------------------------------------------------ v0.4.1 review fixes
+
+def _mini_repo(tmp_path, files):
+    work = tmp_path / "mini"
+    work.mkdir()
+    g(work, "init", "-b", "main")
+    for rel, content in files.items():
+        write(work, rel, content)
+    g(work, "add", "-A")
+    g(work, "commit", "-m", "base")
+    return work
+
+
+PAINT_V1 = 'def paint(color="#fff"):\n    x = 1\n    return color\n'
+
+
+def test_hash_in_a_string_default_is_not_a_comment(tmp_path):
+    """Splitting on a bare `#` cut the signature at the quote; it then ran
+    into the body, and a body edit was reported as a changed default."""
+    work = _mini_repo(tmp_path, {"m.py": PAINT_V1})
+    write(work, "m.py", PAINT_V1.replace("x = 1", "x = 2"))
+    doc = run_json(work, "--no-update")
+    texts = [e["text"] for e in doc["behavior"] + doc["api"]]
+    assert texts == ["~ paint()  1 → 2"]
+    write(work, "m.py", PAINT_V1.replace('"#fff"', '"#000"'))
+    doc = run_json(work, "--no-update")
+    texts = [e["text"] for e in doc["behavior"] + doc["api"]]
+    assert texts == ['~ paint()  default "#fff" → "#000"']
+
+
+def test_py_code_separates_comments_from_strings():
+    assert codediff._py_code('def f(c="#a"):  # note') == (
+        'def f(c="#a"):', 'def f(c=""):')
+    assert codediff._py_code("def f(s='(', t=\"it's\"):")[1] == \
+        "def f(s='', t=\"\"):"
+    assert codediff._py_code(r'x = "a\"#b"  # c')[0] == r'x = "a\"#b"'
+
+
+def test_bom_python_file_is_analyzed(tmp_path):
+    """A BOM is U+FEFF to ast.parse: both sides failed, every symbol
+    vanished, and the change summarized as nothing."""
+    bom = "\ufeff"
+    work = _mini_repo(tmp_path, {"b.py": bom + "def f():\n    return 1\n"})
+    write(work, "b.py", bom + "def f():\n    return 2\n")
+    doc = run_json(work, "--no-update")
+    assert [e["text"] for e in doc["behavior"]] == ["~ f()  1 → 2"]
+
+
+def test_unanalyzed_list_is_capped_on_reduced_rungs(tmp_path):
+    """Every unanalyzed name was listed at every rung, so a diff full of
+    assets kept the floor O(files) and the budget unreachable."""
+    files = {"asset_%03d.bin" % i: "a\n" for i in range(300)}
+    files["m.py"] = PAINT_V1
+    work = _mini_repo(tmp_path, files)
+    for i in range(300):
+        write(work, "asset_%03d.bin" % i, "b\n")
+    write(work, "m.py", PAINT_V1.replace("x = 1", "x = 2"))
+    full = run(work, "--no-update", "--max-tokens", "0").stdout
+    assert "asset_299.bin" in full                    # unbounded: all named
+    proc = run(work, "--no-update", "--max-tokens", "300")
+    assert proc.returncode == 0
+    assert est_tokens(proc.stdout) <= 300
+    assert "300 of 301 files" in proc.stdout
+    assert "… (+295 more)" in proc.stdout
+
+
+def test_jest_and_mocha_test_dirs_are_tests(tmp_path):
+    """`__tests__/` and `test/` hold tests whatever their files are called;
+    they used to be analyzed as source."""
+    js = "export function t1() {\n  return 1;\n}\n"
+    work = _mini_repo(tmp_path, {"src/__tests__/widget.js": js,
+                                 "test/helpers.js": js})
+    write(work, "src/__tests__/widget.js", js.replace("1", "2"))
+    write(work, "test/helpers.js", js.replace("1", "3"))
+    doc = run_json(work, "--no-update")
+    assert doc["behavior"] == [] and doc["api"] == []
+    assert sorted(e["path"] for e in doc["tests"]) == [
+        "src/__tests__/widget.js", "test/helpers.js"]
