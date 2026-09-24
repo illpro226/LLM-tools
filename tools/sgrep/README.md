@@ -21,7 +21,9 @@ sgrep PATTERN --max-tokens N      # reduce: context lines, then matches
 sgrep PATTERN -C 2 -i -F -w -t py -g '*.rs'   # small rg pass-through set
 ```
 
-Exit codes follow grep: 0 matches, 1 none, 2 error.
+Exit codes follow grep: 0 matches, 1 none, 2 error. When rg fails on some
+paths (unreadable file, mistyped path) but matched in others, the matches
+are still printed and the error goes to stderr with exit 2.
 
 ### Example
 

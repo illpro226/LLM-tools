@@ -1,6 +1,6 @@
 # sgrep Status
 
-Implemented (v0.4.1) and passing tests.
+Implemented (v0.5.0) and passing tests.
 
 - `sgrep.py` — single-file CLI covering all PRD modes: condensed ranked
   digest, `--files-only`, `--counts-only`, `--no-collapse`,
@@ -27,9 +27,15 @@ Implemented (v0.4.1) and passing tests.
 - Paths are normalized to `/` at the parser, so a directory-scoped
   search and an explicitly-named file report the same file identically
   on Windows (`rg` echoes whichever separator it was given).
-- Tests: `tests/test_sgrep.py` (33 tests) — parser/dedupe/rank/budget
+- rg's stderr drains concurrently (a full pipe used to hang both
+  processes). When rg fails on some paths but matched in others, the
+  matches print, the error goes to stderr, and the exit is 2.
+- The file-count budget rung is a binary search, so a 20,000-file search
+  fits the default budget in ~3 s rather than ~8 minutes; `--files-only`
+  announces files the budget cut with the digest's `(+N more files …)`.
+- Tests: `tests/test_sgrep.py` (39 tests) — parser/dedupe/rank/budget
   against canned `rg --json` streams in `tests/fixtures/rg-output/`;
-  5 end-to-end tests run against real ripgrep and skip when absent.
+  6 end-to-end tests run against real ripgrep and skip when absent.
 
 Not done / later: no packaging or PATH install story; stored matches capped
 at 200/file (count keeps rising); budgets under ~32 tokens are unsatisfiable

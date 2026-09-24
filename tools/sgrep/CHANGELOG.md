@@ -1,5 +1,27 @@
 # sgrep Changelog
 
+- 2026-09-24: v0.5.0 — four fixes found by a suite review, each with a
+  regression test that fails on v0.4.1.
+  **The budget ladder was quadratic in matching files.** The file-count rung
+  stepped down one file per full re-render, so a search matching 3,000
+  files took 30 s to fit the default budget and one matching 20,000 took
+  7 min 41 s. It is now a binary search (rendered size grows with every
+  kept file, so it lands on the same answer — pinned against the old
+  linear scan); the 20,000-file search takes 3 s. The counts-row floor now
+  keeps a running byte count instead of re-measuring each candidate.
+  **A full stderr pipe hung sgrep forever.** stderr was read only after
+  stdout hit EOF; rg writes a line per unreadable path, and once that pipe
+  filled rg blocked mid-write while sgrep waited on stdout. stderr now
+  drains on a thread, and only the first 5 lines are quoted.
+  **One bad path discarded every match.** rg exits 2 for any error — a
+  mistyped path argument, one unreadable file — even when every other path
+  searched fine, and sgrep raised on that exit code. Matches are now
+  printed, the error goes to stderr, and the exit stays 2 (grep's
+  convention).
+  **`--files-only` dropped files silently.** Trimmed to fit the budget it
+  printed the first N paths with no marker, so a 3,000-file result read as
+  a 315-file one. It now ends with the digest's `(+N more files with M
+  matches)` line. 6 new tests (39 total).
 - 2026-08-06: v0.4.1 — paths are normalized to forward slashes at ingest.
   `rg` echoes the separator of the path it was given, so on Windows a
   directory search printed `tools/sgrep\sgrep.py` while naming the file

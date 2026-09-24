@@ -464,3 +464,144 @@ def test_reduced_context_is_announced():
     assert "--max-tokens" in tight[0]
     # no note when nothing was taken away
     assert not full[0].startswith("(context reduced")
+
+
+# ------------------------------------------- rg errors and wide searches
+
+import threading  # noqa: E402  (grouped with the tests that need it)
+import time  # noqa: E402
+
+MATCH_EVENT = json.dumps({"type": "match", "data": {
+    "path": {"text": "a.txt"}, "lines": {"text": "needle here\n"},
+    "line_number": 1}})
+
+
+def _fake_rg(monkeypatch, tmp_path, stderr_bytes, exit_code):
+    """Swap the rg binary for a script: floods stderr with `stderr_bytes`
+    bytes first, then emits one match on stdout and exits `exit_code`."""
+    script = tmp_path / "fake_rg.py"
+    script.write_text(
+        "import sys\n"
+        "line = 'rg: some/dir: Access is denied. (os error 5)\\n'\n"
+        "sys.stderr.write(line * (%d // len(line) + 1))\n"
+        "sys.stderr.flush()\n"
+        "print(%r)\n"
+        "sys.exit(%d)\n" % (stderr_bytes, MATCH_EVENT, exit_code),
+        encoding="utf-8")
+    spawned = []
+    real_popen = subprocess.Popen
+
+    def fake_popen(cmd, **kw):
+        proc = real_popen([sys.executable, str(script)] + cmd[1:], **kw)
+        spawned.append(proc)
+        return proc
+
+    monkeypatch.setattr(sgrep.subprocess, "Popen", fake_popen)
+    return spawned
+
+
+def test_stderr_flood_does_not_deadlock(monkeypatch, tmp_path):
+    """rg writes a stderr line per unreadable path. Reading stderr only after
+    stdout hit EOF let that pipe fill, block rg mid-write, and hang both
+    processes forever - far more than one pipe buffer here."""
+    spawned = _fake_rg(monkeypatch, tmp_path, 400_000, 2)
+    result = {}
+
+    def call():
+        result["out"] = sgrep.run_rg("rg", ["--", "needle", "."])
+
+    t = threading.Thread(target=call, daemon=True)
+    t.start()
+    t.join(timeout=60)
+    if t.is_alive():
+        for proc in spawned:
+            proc.kill()
+        pytest.fail("run_rg deadlocked on a full stderr pipe")
+    files, errors = result["out"]
+    assert files["a.txt"]["count"] == 1
+    assert "Access is denied" in errors
+    assert "more error lines" in errors      # quoted lines are capped
+
+
+def test_partial_rg_error_keeps_the_matches(monkeypatch, tmp_path, capsys):
+    """rg exits 2 for any error, even with matches in every other path; the
+    matches used to be discarded, so one bad path read as no output."""
+    _fake_rg(monkeypatch, tmp_path, 10, 2)
+    code, out, err = run(["needle", "."], capsys)
+    assert code == 2                          # grep: an error is still 2
+    assert "a.txt:1: needle here" in out
+    assert "rg reported errors" in err and "Access is denied" in err
+
+
+@needs_rg
+def test_cli_bad_path_among_good_ones_keeps_the_matches(capsys):
+    code, out, err = run(["--rg", RG, "needle", TREE,
+                          os.path.join(TREE, "no-such-dir-zz")], capsys)
+    assert code == 2
+    assert "auth.py (9 matches)" in out
+    assert "no-such-dir-zz" in err
+
+
+def _synthetic(nfiles):
+    """nfiles matching files with varied match counts and path lengths."""
+    files = {}
+    for i in range(nfiles):
+        n = 1 + (i * 7) % 9
+        path = "pkg%d/%s/file_%05d.py" % (i % 5, "sub" * (i % 3), i)
+        files[path] = {"count": n, "contexts": {},
+                       "matches": [(k + 1, "needle %d call(%d)" % (i, k))
+                                   for k in range(n)]}
+    return files
+
+
+def _linear_budget(ranked, files, max_tokens):
+    """The pre-0.5.0 file-count rung, one file at a time: the reference the
+    binary search must agree with (context 0, representatives capped at 1)."""
+    for n in range(len(ranked), 0, -1):
+        lines = sgrep.render(ranked, files, 0, 1, n, False, False)
+        if sgrep._tokens_of(lines) <= max_tokens:
+            return lines
+    return None
+
+
+def test_file_count_search_matches_the_linear_scan():
+    files = _synthetic(120)
+    weights, extra = default_conf()
+    ranked = sgrep.rank(files, weights, extra)
+    for budget in (60, 150, 400, 900, 1500):
+        want = _linear_budget(ranked, files, budget)
+        got = sgrep.apply_budget(ranked, files, _Args(max_tokens=budget))
+        if want is not None:
+            assert got == want, budget
+
+
+def test_budget_on_a_very_wide_search_is_fast():
+    """20,000 matching files used to take nearly 8 minutes to fit the
+    default budget; the file-count rung now costs O(log n) renders."""
+    files = _synthetic(20_000)
+    weights, extra = default_conf()
+    ranked = sgrep.rank(files, weights, extra)
+    start = time.monotonic()
+    lines = sgrep.apply_budget(
+        ranked, files, _Args(max_tokens=sgrep.DEFAULT_MAX_TOKENS))
+    assert time.monotonic() - start < 15
+    assert sgrep._tokens_of(lines) <= sgrep.DEFAULT_MAX_TOKENS
+    assert re.match(r"^\(\+\d+ more files with \d+ matches\)$", lines[-1])
+
+
+def test_files_only_announces_files_cut_by_the_budget():
+    """A --files-only list trimmed to fit must not pass as the complete
+    list of matching files."""
+    files = _synthetic(400)
+    weights, extra = default_conf()
+    ranked = sgrep.rank(files, weights, extra)
+    args = _Args(max_tokens=300)
+    args.files_only = True
+    lines = sgrep.apply_budget(ranked, files, args)
+    assert sgrep._tokens_of(lines) <= 300
+    m = re.match(r"^\(\+(\d+) more files with \d+ matches\)$", lines[-1])
+    assert m, lines[-1]
+    assert len(lines) - 1 + int(m.group(1)) == len(ranked)
+    # an uncut list carries no marker
+    whole = sgrep.apply_budget(ranked, files, _Args(max_tokens=0))
+    assert not whole[-1].startswith("(+")

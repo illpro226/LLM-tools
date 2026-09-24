@@ -15,7 +15,9 @@ and hard-caps total output.
 
 Matching is never reimplemented: ripgrep must be installed (`rg` on PATH,
 or point at a binary with --rg / SGREP_RG). Exit codes follow grep: 0
-matches found, 1 none, 2 error.
+matches found, 1 none, 2 error — including rg failing on some paths after
+finding matches in others, in which case the matches are still printed
+and the error goes to stderr.
 """
 
 import argparse
@@ -24,12 +26,15 @@ import os
 import re
 import subprocess
 import sys
+import threading
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 
 SHOW_ALL_LIMIT = 5    # files with <= this many matching lines show them all
 REPRESENTATIVES = 3   # distinct lines shown when a file exceeds the limit
 MAX_STORED = 200      # matches kept per file; the count keeps rising past it
+STDERR_KEPT = 5       # rg error lines quoted (a regex error is ~4); the
+                      # rest are counted, not echoed
 # ADR-005: the budget ladder is on by default. An opt-in cap protects only
 # the callers who already suspected the output would be large, which is
 # exactly the case where they didn't need protecting; the calls that blow
@@ -143,6 +148,12 @@ def parse_stream(lines):
 
 
 def run_rg(rg_bin, argv_tail):
+    """Returns (files, errors): `errors` is rg's complaint when it failed on
+    some paths but still found matches in others, else "".
+
+    rg exits 2 for *any* error — one unreadable file, one mistyped path
+    argument — even when every other path searched fine. Raising there threw
+    away every match it had found, so one bad path read as "no output"."""
     cmd = [rg_bin, "--json", "--no-config", "--sort", "path"] + argv_tail
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
@@ -154,13 +165,32 @@ def run_rg(rg_bin, argv_tail):
             "winget install BurntSushi.ripgrep.MSVC / apt install ripgrep / "
             "brew install ripgrep — or point --rg / SGREP_RG at the binary"
             % rg_bin)
+    # Drain stderr while stdout streams. Read only after stdout hit EOF, a
+    # stderr pipe holding more than one buffer's worth (rg writes a line per
+    # unreadable path) blocks rg mid-write, and both processes wait forever:
+    # observed as a hang, not an error.
+    err = {"lines": [], "extra": 0}
+
+    def drain():
+        for line in proc.stderr:
+            if len(err["lines"]) < STDERR_KEPT:
+                err["lines"].append(line.rstrip("\r\n"))
+            else:
+                err["extra"] += 1
+
+    reader = threading.Thread(target=drain, daemon=True)
+    reader.start()
     files = parse_stream(proc.stdout)
-    stderr = proc.stderr.read()
     code = proc.wait()
+    reader.join()
+    stderr = "\n".join(err["lines"]).strip()
+    if err["extra"]:
+        stderr += "\n(+%d more error lines)" % err["extra"]
     if code not in (0, 1):
-        raise SgrepError("rg failed: %s" % (stderr.strip() or
-                                            "exit %d" % code))
-    return files
+        if not files:
+            raise SgrepError("rg failed: %s" % (stderr or "exit %d" % code))
+        return files, stderr or "rg exited %d" % code
+    return files, ""
 
 
 # ------------------------------------------------------- dedupe and ranking
@@ -218,7 +248,9 @@ def render(ranked, files, ctx_radius, cap, nfiles, counts_only, files_only,
            no_collapse=False):
     kept = ranked[:nfiles]
     if files_only:
-        return list(kept)
+        # Same marker as the digest: a file list the budget cut short must
+        # not read as the complete list of matching files.
+        return list(kept) + _dropped_files_note(ranked, kept, files)
     if counts_only:
         rows = [(files[p]["count"], p) for p in kept]
         width = max((len(str(c)) for c, _ in rows), default=1)
@@ -258,11 +290,17 @@ def render(ranked, files, ctx_radius, cap, nfiles, counts_only, files_only,
             out.append("(+%d more)" % hidden if no_collapse
                        else "(+%d more similar)" % hidden)
     if len(ranked) > len(kept):
-        dropped = ranked[len(kept):]
         out.append("")
-        out.append("(+%d more files with %d matches)"
-                   % (len(dropped), sum(files[p]["count"] for p in dropped)))
+        out += _dropped_files_note(ranked, kept, files)
     return out
+
+
+def _dropped_files_note(ranked, kept, files):
+    if len(ranked) <= len(kept):
+        return []
+    dropped = ranked[len(kept):]
+    return ["(+%d more files with %d matches)"
+            % (len(dropped), sum(files[p]["count"] for p in dropped))]
 
 
 def apply_budget(ranked, files, args):
@@ -299,7 +337,23 @@ def apply_budget(ranked, files, args):
         elif cap > 1:
             cap -= 1
         elif nfiles > 1:
-            nfiles -= 1
+            # The most files that fit. Stepping down one file per render was
+            # O(files²): 30 s for a 3,000-file search, nearly 8 minutes for
+            # 20,000. Every kept file adds at least a header line — more than
+            # the "(+N more files)" marker's digits can shrink — so size grows
+            # with the count and a binary search lands on the same answer.
+            lo, hi, best = 1, nfiles - 1, None
+            while lo <= hi:
+                mid = (lo + hi) // 2
+                cand = note(render(ranked, files, ctx, cap, mid, counts_only,
+                                   args.files_only, args.no_collapse))
+                if _tokens_of(cand) <= args.max_tokens:
+                    best, lo = cand, mid + 1
+                else:
+                    hi = mid - 1
+            if best is not None:
+                return best
+            nfiles = 1
         elif not counts_only and not args.files_only:
             counts_only = True
             lines = render(ranked, files, 0, 1, len(ranked), True, False)
@@ -316,14 +370,16 @@ def apply_budget(ranked, files, args):
         return "(… %d more lines elided for --max-tokens %d)" % (
             n, args.max_tokens)
 
-    best = [lines[0], marker(len(lines) - 1)]
+    # Running byte count, not a re-measure per candidate: the rows being
+    # truncated here are one per matching file, so this loop is as long as
+    # the search is wide.
+    best_k, used = 1, len(lines[0]) + 1
     for k in range(2, len(lines)):
-        cand = lines[:k] + [marker(len(lines) - k)]
-        if _tokens_of(cand) <= args.max_tokens:
-            best = cand
-        else:
+        used += len(lines[k - 1]) + 1
+        if (used + len(marker(len(lines) - k)) + 1) // 4 > args.max_tokens:
             break
-    return best
+        best_k = k
+    return lines[:best_k] + [marker(len(lines) - best_k)]
 
 
 # --------------------------------------------------------------------- CLI
@@ -388,7 +444,7 @@ def main(argv=None):
 
     try:
         weights, extra = load_config(args.config)
-        files = run_rg(args.rg, tail)
+        files, rg_errors = run_rg(args.rg, tail)
     except SgrepError as exc:
         print("sgrep: %s" % exc, file=sys.stderr)
         return 2
@@ -402,6 +458,13 @@ def main(argv=None):
     except (AttributeError, ValueError):
         pass
     print("\n".join(lines))
+    if rg_errors:
+        # grep's convention: an error is exit 2 even when lines matched. The
+        # matches above are real; what is missing is whatever rg could not
+        # read, so say what that was rather than let the list pass as whole.
+        print("sgrep: rg reported errors; matches above cover only the paths "
+              "it could search:\n%s" % rg_errors, file=sys.stderr)
+        return 2
     return 0
 
 
