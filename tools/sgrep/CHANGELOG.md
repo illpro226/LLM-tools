@@ -21,7 +21,10 @@
   **`--files-only` dropped files silently.** Trimmed to fit the budget it
   printed the first N paths with no marker, so a 3,000-file result read as
   a 315-file one. It now ends with the digest's `(+N more files with M
-  matches)` line. 6 new tests (39 total).
+  matches)` line. Also: `-n` is accepted and ignored (line numbers are
+  always shown) instead of costing a round-trip as an argparse error —
+  found by typing it from grep habit during the same review. 7 new tests
+  (40 total).
 - 2026-08-06: v0.4.1 — paths are normalized to forward slashes at ingest.
   `rg` echoes the separator of the path it was given, so on Windows a
   directory search printed `tools/sgrep\sgrep.py` while naming the file

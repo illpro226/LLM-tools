@@ -23,7 +23,7 @@ the suite.
   contract at 80 lines, `CLAUDE.md` is one line, all six doc kinds exist, and
   both gates run.
 - `python scripts/test_all.py` runs every suite in parallel and states the
-  result in one screen: all nine pass, 468 tests (533 with `--archived`),
+  result in one screen: all nine pass, 469 tests (534 with `--archived`),
   2026-09-24. A review that day fixed bugs in all nine tools — among them
   an sgrep budget loop quadratic in matching files (8 minutes at 20,000),
   an sgrep stderr deadlock, structo and xread misreading UTF-8 BOM files,

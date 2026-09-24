@@ -405,6 +405,11 @@ def main(argv=None):
                         metavar="GLOB", help="rg glob filter")
     parser.add_argument("-C", "--context", type=int, metavar="N", default=0,
                         help="context lines around each shown match")
+    # grep muscle memory: match lines always carry path:line, so -n asks for
+    # what is already there. Rejecting it cost a round-trip to learn that.
+    parser.add_argument("-n", "--line-number", action="store_true",
+                        help="accepted and ignored: line numbers are always "
+                             "shown")
     parser.add_argument("--files-only", action="store_true",
                         help="ranked matching-file list only")
     parser.add_argument("--counts-only", action="store_true",

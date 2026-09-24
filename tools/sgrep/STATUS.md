@@ -33,9 +33,9 @@ Implemented (v0.5.0) and passing tests.
 - The file-count budget rung is a binary search, so a 20,000-file search
   fits the default budget in ~3 s rather than ~8 minutes; `--files-only`
   announces files the budget cut with the digest's `(+N more files …)`.
-- Tests: `tests/test_sgrep.py` (39 tests) — parser/dedupe/rank/budget
+- Tests: `tests/test_sgrep.py` (40 tests) — parser/dedupe/rank/budget
   against canned `rg --json` streams in `tests/fixtures/rg-output/`;
-  6 end-to-end tests run against real ripgrep and skip when absent.
+  7 end-to-end tests run against real ripgrep and skip when absent.
 
 Not done / later: no packaging or PATH install story; stored matches capped
 at 200/file (count keeps rising); budgets under ~32 tokens are unsatisfiable

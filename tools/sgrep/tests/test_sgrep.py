@@ -605,3 +605,11 @@ def test_files_only_announces_files_cut_by_the_budget():
     # an uncut list carries no marker
     whole = sgrep.apply_budget(ranked, files, _Args(max_tokens=0))
     assert not whole[-1].startswith("(+")
+
+
+@needs_rg
+def test_dash_n_is_accepted_as_a_no_op(capsys):
+    """grep habit: -n used to be an argparse error and a wasted call."""
+    code, out, _ = run(["-n"] + rg_args(), capsys)
+    code2, out2, _ = run(rg_args(), capsys)
+    assert code == code2 == 0 and out == out2
