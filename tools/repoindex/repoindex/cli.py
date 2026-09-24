@@ -7,6 +7,7 @@ import os
 import re
 import sqlite3
 import sys
+from urllib.parse import quote
 
 from . import db as dbmod
 from . import extract as extractmod
@@ -20,8 +21,20 @@ def _db_path(root):
     return os.path.join(root, DB_RELPATH)
 
 
+def ro_uri(db_path):
+    """A read-only SQLite URI for db_path, percent-quoted. Unquoted, a `#`
+    in the path (a `C#` project folder) started the URI fragment: the path
+    was cut there, `?mode=ro` went with it, and the "read-only" `sql`
+    created an empty database file beside the repo and reported "no such
+    table"."""
+    return "file:%s?mode=ro" % quote(db_path.replace(os.sep, "/"))
+
+
 def _read(root, rel):
-    with open(os.path.join(root, rel), encoding="utf-8", errors="replace") as f:
+    # utf-8-sig: a byte-order mark is U+FEFF to ast.parse, so a BOM'd Python
+    # file extracted as a syntax error — indexed with no symbols, silently.
+    with open(os.path.join(root, rel), encoding="utf-8-sig",
+              errors="replace") as f:
         return f.read()
 
 
@@ -186,7 +199,7 @@ def sql(root, query):
               file=sys.stderr)
         return 2
 
-    uri = f"file:{db_path.replace(os.sep, '/')}?mode=ro"
+    uri = ro_uri(db_path)
     conn = sqlite3.connect(uri, uri=True)
     try:
         cur = conn.execute(query)

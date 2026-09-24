@@ -1,5 +1,20 @@
 # repoindex Changelog
 
+- 2026-09-24: v0.1.6 — fixes from a suite review, each pinned by a test
+  that fails on v0.1.5. **The read-only `sql` could create a database.**
+  Its URI was not quoted, so a `#` in the repo path (a `C#` project folder)
+  began the URI fragment: the path was cut at it, `?mode=ro` went with it,
+  sqlite created an empty db named after the truncated path beside the
+  repo, and the query failed with "no such table". The URI is now
+  percent-quoted (`ro_uri`). **`.gitignore` never pruned a directory.**
+  Patterns were matched against files only, so `out/` or `generated/`
+  excluded nothing beneath it and every source file there was indexed; the
+  walk now prunes matching directories, as repomap's does. **A BOM'd
+  Python file indexed with no symbols** (U+FEFF is a syntax error to
+  `ast.parse`); sources are read as `utf-8-sig` — such files re-extract once
+  on the next `update`, since their content hash changes. A non-utf-8
+  `.gitignore` or `go.mod` no longer aborts the build. 3 new tests (61
+  total).
 - 2026-07-31: stderr pinned to UTF-8 at entry alongside stdout. Error messages
   carry the same non-ASCII punctuation as normal output (em dashes,
   ellipses, arrows); on a cp1252 console they reached the caller as

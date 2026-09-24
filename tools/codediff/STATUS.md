@@ -1,6 +1,6 @@
 # codediff Status
 
-Implemented (v0.5.0, 2026-09-24). Single-file CLI (`codediff.py`) with 54
+Implemented (v0.5.0, 2026-09-24). Single-file CLI (`codediff.py`) with 55
 tests in `tests/` against scripted temp repos; requires `git` and the
 sibling `repoindex` package (`repoindex.extract`). Python and JS/TS
 covered by fixtures; Go tracks repoindex's extractor but has no fixture

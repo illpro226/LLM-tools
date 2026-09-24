@@ -673,3 +673,42 @@ def test_pin_utf8_covers_stderr():
         assert _sys.stderr.encoding.lower().replace("-", "") == "utf8"
     finally:
         _sys.stdout, _sys.stderr = saved
+
+
+# ------------------------------------------------ v0.x review fixes
+
+def test_bom_python_file_is_indexed(tmp_path):
+    """A BOM is U+FEFF to ast.parse: the file indexed with no symbols."""
+    (tmp_path / "bom.py").write_bytes(b"\xef\xbb\xbfdef bomfn():\n    return 2\n")
+    cli.build(str(tmp_path))
+    conn = _connect(tmp_path)
+    assert _rows(conn, "SELECT qualname FROM symbols") == [("bom.py::bomfn",)]
+
+
+def test_sql_under_a_hash_in_the_path_stays_read_only(tmp_path, capsys):
+    """Unquoted, `#` began the URI fragment: `?mode=ro` was dropped, an
+    empty db named after the truncated path was created beside the repo,
+    and the query failed with "no such table"."""
+    repo = tmp_path / "C#proj"
+    repo.mkdir()
+    (repo / "m.py").write_text("def a():\n    return 1\n", encoding="utf-8")
+    cli.build(str(repo))
+    capsys.readouterr()
+    before = sorted(os.listdir(tmp_path))
+    assert cli.sql(str(repo), "SELECT qualname FROM symbols") == 0
+    assert "m.py::a" in capsys.readouterr().out
+    assert sorted(os.listdir(tmp_path)) == before       # nothing created
+
+
+def test_non_utf8_gitignore_does_not_abort_the_build(tmp_path):
+    """A Latin-1 .gitignore raised UnicodeDecodeError and aborted the build;
+    and a directory pattern (`skipme/`) never pruned the directory, so every
+    source file beneath it was indexed."""
+    (tmp_path / ".gitignore").write_bytes(b"# caf\xe9\nskipme/\n")
+    (tmp_path / "skipme").mkdir()
+    (tmp_path / "skipme" / "x.py").write_text("def x(): pass\n",
+                                               encoding="utf-8")
+    (tmp_path / "keep.py").write_text("def k(): pass\n", encoding="utf-8")
+    cli.build(str(tmp_path))
+    conn = _connect(tmp_path)
+    assert _rows(conn, "SELECT path FROM files") == [("keep.py",)]

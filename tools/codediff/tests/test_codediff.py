@@ -548,3 +548,24 @@ def test_jest_and_mocha_test_dirs_are_tests(tmp_path):
     assert doc["behavior"] == [] and doc["api"] == []
     assert sorted(e["path"] for e in doc["tests"]) == [
         "src/__tests__/widget.js", "test/helpers.js"]
+
+
+def test_index_under_a_hash_path_is_read_only(tmp_path):
+    """Unquoted, `#` began the sqlite URI fragment: `?mode=ro` was dropped,
+    an empty db appeared beside the repo, and "no such table: tests"
+    escaped as a traceback."""
+    from conftest import REPOINDEX
+    work = tmp_path / "C#proj"
+    work.mkdir()
+    g(work, "init", "-b", "main")
+    write(work, "m.py", "def a():\n    return 1\n")
+    g(work, "add", "-A")
+    g(work, "commit", "-m", "base")
+    proc = subprocess.run([sys.executable, REPOINDEX, "--root", str(work),
+                           "build"], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    write(work, "m.py", "def a():\n    return 5\n")
+    proc = run(work, "--no-update")
+    assert proc.returncode == 0, proc.stderr
+    assert "no known tests cover 1 changed file" in proc.stdout
+    assert sorted(os.listdir(tmp_path)) == ["C#proj"]

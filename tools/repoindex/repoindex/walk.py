@@ -14,7 +14,9 @@ def load_gitignore(root):
     path = os.path.join(root, ".gitignore")
     pats = []
     if os.path.isfile(path):
-        with open(path, encoding="utf-8") as f:
+        # A .gitignore is not always utf-8 (Latin-1 comments are common on
+        # Windows); a decode error here aborted the whole build.
+        with open(path, encoding="utf-8", errors="replace") as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#"):
@@ -36,8 +38,14 @@ def scan_repo(root):
     pats = load_gitignore(root)
     out = []
     for dirpath, dirnames, filenames in os.walk(root):
+        # Patterns prune directories too. They used to be matched against
+        # file names and paths only, so `out/` or `generated/` excluded
+        # nothing beneath it and every source file there was indexed.
+        rel_dir = os.path.relpath(dirpath, root).replace("\\", "/")
+        rel_dir = "" if rel_dir == "." else rel_dir + "/"
         dirnames[:] = [d for d in dirnames
-                        if d not in SKIP_DIRS and not d.startswith(".")]
+                        if d not in SKIP_DIRS and not d.startswith(".")
+                        and not ignored(rel_dir + d, d, pats)]
         for name in filenames:
             if not name.endswith(EXTS):
                 continue
@@ -55,7 +63,7 @@ def ensure_gitignore_entry(root):
     path = os.path.join(root, ".gitignore")
     existing = []
     if os.path.isfile(path):
-        with open(path, encoding="utf-8") as f:
+        with open(path, encoding="utf-8", errors="replace") as f:
             existing = f.read().splitlines()
     for line in existing:
         s = line.strip()

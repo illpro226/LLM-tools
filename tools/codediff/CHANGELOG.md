@@ -21,7 +21,11 @@
   Also: the implicit `repoindex update` capture pins utf-8 (INVARIANTS: a
   non-ASCII path in its output could raise `UnicodeDecodeError` there);
   `diff.relative` is pinned off like gitbrief; a modified file is extracted
-  once instead of twice. 5 new tests (54 total).
+  once instead of twice. **Risk flags crashed under a `#` in the repo
+  path**: the index was opened through an unquoted sqlite URI, so a `C#`
+  project folder lost `?mode=ro`, an empty db was created beside the repo,
+  and "no such table: tests" escaped as a traceback; the URI is now
+  percent-quoted. 6 new tests (55 total).
 - 2026-09-11: v0.4.0 — new `Doc changes` section: markdown files get a
   structural pass (headings added/removed, bodies moved, fenced code
   changed) instead of falling out as "not analyzed" (ADR-009). Whatever

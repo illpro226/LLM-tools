@@ -110,7 +110,7 @@ def _find_go_module(root, start_dir):
             gomod = os.path.join(root, d, "go.mod") if d else os.path.join(root, "go.mod")
             cached = None
             if os.path.isfile(gomod):
-                with open(gomod, encoding="utf-8") as f:
+                with open(gomod, encoding="utf-8", errors="replace") as f:
                     for line in f:
                         line = line.strip()
                         if line.startswith("module "):

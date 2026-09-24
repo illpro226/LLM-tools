@@ -38,6 +38,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+from urllib.parse import quote
 
 try:
     import tomllib
@@ -864,7 +865,11 @@ def risk_flags(out, entries, root, cfg, no_update, repoindex_cmd):
         if os.path.exists(db_path):
             if not no_update:
                 ensure_fresh(root, repoindex_cmd)
-            uri = "file:%s?mode=ro" % db_path.replace(os.sep, "/")
+            # Percent-quoted: a `#` in the path (a `C#` project folder)
+            # began the URI fragment, dropped `?mode=ro`, and sqlite created
+            # an empty db beside the repo — then "no such table" escaped
+            # as a traceback.
+            uri = "file:%s?mode=ro" % quote(db_path.replace(os.sep, "/"))
             conn = sqlite3.connect(uri, uri=True)
             try:
                 stale, uncovered = [], []

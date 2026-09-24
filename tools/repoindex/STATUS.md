@@ -1,6 +1,6 @@
 # repoindex Status
 
-Implemented (v0.1.5) and passing tests.
+Implemented (v0.1.6) and passing tests.
 
 - `repoindex/` — importable package: `extract.py` (pure, filesystem-free
   `extract(path, source, lang=None) -> ExtractedFile`, ADR-006), `resolve.py`
@@ -30,9 +30,12 @@ Implemented (v0.1.5) and passing tests.
   short-circuit); unchanged files are reconstructed from the DB (not
   re-parsed) to feed the repo-wide resolve/test-seed/Go-implements passes;
   everything commits in one transaction.
-- `sql` is read-only (`mode=ro` + a write-statement pre-check); `status`
-  reports freshness and per-language file/symbol counts.
-- Tests: `tests/test_repoindex.py` (58 tests) against a shared fixture repo
+- `sql` is read-only (`mode=ro` on a percent-quoted URI + a
+  write-statement pre-check); `status` reports freshness and per-language
+  file/symbol counts.
+- Discovery prunes `.gitignore`d directories (not just matching files),
+  tolerates a non-utf-8 `.gitignore`, and reads sources as `utf-8-sig`.
+- Tests: `tests/test_repoindex.py` (61 tests) against a shared fixture repo
   (`tests/fixtures/repo/`) covering every relationship kind — a call cycle,
   an import cycle (`py/cyc_a.py` <-> `py/cyc_b.py`, added for `rq findcycles`),
   a dynamic/getattr call, an ambiguous bare name, reads/writes, a resolvable
