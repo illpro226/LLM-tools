@@ -35,7 +35,7 @@ import subprocess
 import sys
 import time
 
-__version__ = "0.3.0"
+__version__ = "0.5.0"
 
 EXIT_INTERNAL = 125   # runlite's own failure, never the wrapped command's
 EXIT_NOT_FOUND = 127
@@ -426,7 +426,12 @@ def _tokens_of(lines):
 
 
 def _one_line(p):
-    return p["title"] + ("  " + p["ref"] if p["ref"] else "")
+    # The generic extractor's title is the raw log line, which usually
+    # already carries the path:line it was found by; saying it twice is
+    # pure overhead on the extractor that emits the most lines.
+    if p["ref"] and p["ref"] not in p["title"]:
+        return p["title"] + "  " + p["ref"]
+    return p["title"]
 
 
 def _block(p):
@@ -439,7 +444,7 @@ _FAILURE_TITLE = re.compile(r"^FAIL(?:ED)?\b")
 
 
 def render(exit_code, wall, ext_name, problems, tail, max_tokens, log_path,
-           log_bytes=None):
+           log_bytes=None, log_error=None):
     dropped = 0
     if exit_code == 0:
         # The exit code is the reliable signal; a "1 problem / FAIL" body
@@ -469,7 +474,9 @@ def render(exit_code, wall, ext_name, problems, tail, max_tokens, log_path,
                       "exited 0, so nothing failed (the %s extractor matched "
                       "output it does not own)"
                       % (dropped, "s"[: dropped != 1], ext_name))
-    if log_path:
+    if log_error:
+        header.append("# raw log: NOT written to %s (%s)" % log_error)
+    elif log_path:
         header.append("# raw log: %s" % log_path)
 
     lines = list(header)
@@ -482,25 +489,56 @@ def render(exit_code, wall, ext_name, problems, tail, max_tokens, log_path,
         lines.extend("  " + t for t in tail)
 
     if max_tokens and _tokens_of(lines) > max_tokens and problems:
-        # Budget rule (ADR-004): first problem in full, rest one line each.
-        lines = list(header)
-        lines.append("")
-        lines.extend(_block(problems[0]))
-        if len(problems) > 1:
-            lines.append("")
-            lines.extend(_one_line(p) for p in problems[1:])
-            lines.append("(… %d problem%s collapsed to one line each for "
-                         "--max-tokens %d)"
-                         % (n - 1, "s"[: n - 1 != 1], max_tokens))
-        while _tokens_of(lines) > max_tokens and problems[0]["detail"]:
-            # Still over: shrink the first problem's detail from the bottom.
-            cut = lines.index("") + 1 + 1 + len(problems[0]["detail"])
-            del lines[cut - 1]
-            problems[0]["detail"].pop()
-            if not problems[0]["detail"] or _tokens_of(lines) <= max_tokens:
-                lines.insert(cut - 1, "  (… detail truncated)")
-                break
+        return _degrade(header, problems, tail, max_tokens)
     return lines
+
+
+def _degrade(header, problems, tail, max_tokens):
+    """Over budget. ADR-004: the first problem in full, the rest one line
+    each; then the first problem's detail shrinks from the bottom; then
+    (ADR-006) the one-line list itself is cut. That last rung is what makes
+    the ladder terminate: one line per problem is still O(problems), and a
+    log with 300 warnings printed 300 lines against `--max-tokens 100`."""
+    first, rest = problems[0], problems[1:]
+
+    def assemble(keep_detail, listed):
+        out = list(header) + ["", _one_line(first)]
+        out += ["  " + d for d in first["detail"][:keep_detail]]
+        if keep_detail < len(first["detail"]):
+            out.append("  (… detail truncated)")
+        if rest:
+            out += [""] + [_one_line(p) for p in rest[:listed]]
+            out.append("(… %d problem%s collapsed to one line each for "
+                       "--max-tokens %d)"
+                       % (len(rest), "s"[: len(rest) != 1], max_tokens))
+            if listed < len(rest):
+                out.append("(… %d of them not listed; the raw log has every "
+                           "one — rerun with --full-log PATH)"
+                           % (len(rest) - listed))
+        if tail:
+            # The generic extractor's tail is half its answer; losing it
+            # unannounced reads as "the log ended here".
+            out.append("(log tail dropped for --max-tokens %d)" % max_tokens)
+        return out
+
+    for keep in range(len(first["detail"]), -1, -1):
+        lines = assemble(keep, len(rest))
+        if _tokens_of(lines) <= max_tokens:
+            return lines
+    # Most one-liners that fit, hiding at least two: a "not listed" line
+    # costs about what a single hidden one-liner does, so hiding one buys
+    # nothing and loses its reference.
+    lo, hi, best = 0, len(rest) - 2, None
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        cand = assemble(0, mid)
+        if _tokens_of(cand) <= max_tokens:
+            best, lo = cand, mid + 1
+        else:
+            hi = mid - 1
+    if best is not None:
+        return best
+    return assemble(0, 0) if len(rest) >= 2 else assemble(0, len(rest))
 
 
 # -------------------------------------------------------------------- traces
@@ -602,8 +640,8 @@ _PY_CAUSE = "The above exception was the direct cause"
 
 def parse_python_trace(text):
     lines = text.splitlines()
-    blocks, pending = [], "raised"
-    i = 0
+    chains, pending = [], None   # pending: a relation marker since the last
+    i = 0                        # block, or None
     while i < len(lines):
         if _PY_DURING in lines[i]:
             pending = "during handling of"
@@ -622,25 +660,37 @@ def parse_python_trace(text):
             header = lines[j].strip() if j < len(lines) else "(no exception line)"
             # Python prints outermost-first; lead with the failure site.
             frames.reverse()
-            blocks.append({"kind": pending, "header": header, "frames": frames})
-            pending = "raised"
+            block = {"kind": pending or "raised", "header": header,
+                     "frames": frames}
+            if pending and chains:
+                chains[-1].append(block)
+            else:
+                # Python writes a relation marker between the tracebacks of
+                # one chain. Without one, this is a separate failure — two
+                # errors hours apart in a service log used to fold into one
+                # "chain", the later one presented as raised while handling
+                # the earlier.
+                chains.append([block])
+            pending = None
             i = j
         i += 1
-    if not blocks:
-        return []
-    # A marker sits between two exceptions and names the relation, so it
-    # arrives attached to the *later* block ("B occurred during handling of
-    # A"). Reading propagated-first, that phrase has to label A, the block
-    # before it — hence the shift, then the reverse. The last block in text
-    # order is the one that propagated and is what "raised" belongs to.
-    kinds = [b["kind"] for b in blocks]
-    for i in range(len(blocks) - 1):
-        blocks[i]["kind"] = kinds[i + 1]
-    blocks[-1]["kind"] = "raised"
-    blocks.reverse()
-    return [{"lang": "python",
-             "sections": [_section(b["kind"], b["header"], b["frames"])
-                          for b in blocks]}]
+    traces = []
+    for blocks in chains:
+        # A marker sits between two exceptions and names the relation, so
+        # it arrives attached to the *later* block ("B occurred during
+        # handling of A"). Reading propagated-first, that phrase has to
+        # label A, the block before it — hence the shift, then the reverse.
+        # The last block in text order is the one that propagated and is
+        # what "raised" belongs to.
+        kinds = [b["kind"] for b in blocks]
+        for k in range(len(blocks) - 1):
+            blocks[k]["kind"] = kinds[k + 1]
+        blocks[-1]["kind"] = "raised"
+        blocks.reverse()
+        traces.append({"lang": "python",
+                       "sections": [_section(b["kind"], b["header"],
+                                             b["frames"]) for b in blocks]})
+    return traces
 
 
 # ---- java / jvm
@@ -1014,12 +1064,34 @@ def render_traces(lang, traces, all_frames, max_tokens, input_bytes):
         if _tokens_of(lines) <= max_tokens:
             return lines
     # 3. Floor: every exception, each with the one path:line that carries
-    #    it. Bounded by trace count, and never empty of references.
-    return ["# runlite trace: %s, %d trace%s, %s (summary only)"
+    #    it, never empty of references...
+    head = ["# runlite trace: %s, %d trace%s, %s (summary only)"
             " [input %d B]"
             % (lang, len(traces), "s"[: len(traces) != 1],
                "%d frames" % total if total != 1 else "1 frame", input_bytes),
-            note, ""] + [_trace_summary(t) for t in traces]
+            note, ""]
+    summaries = [_trace_summary(t) for t in traces]
+    if _tokens_of(head + summaries) <= max_tokens:
+        return head + summaries
+    # ...and, since one line per trace is still O(traces) for a log that
+    # holds thousands, the head of that list plus a count. Trace #1, the
+    # one that propagated, always stays.
+    def more(n):
+        return "(… %d more trace%s not listed for --max-tokens %d)" % (
+            n, "s"[: n != 1], max_tokens)
+
+    used, k = sum(len(l) + 1 for l in head), 0
+    for line in summaries:
+        cost = len(line) + 1 + len(more(len(summaries) - k - 1)) + 1
+        if k and (used + cost) // 4 > max_tokens:
+            break
+        used += len(line) + 1
+        k += 1
+    if len(summaries) - k < 2:
+        # A count line costs about what the one summary it would hide does;
+        # hiding a single trace buys nothing and loses its reference.
+        return head + summaries
+    return head + summaries[:k] + [more(len(summaries) - k)]
 
 
 def _read_trace_input(path):
@@ -1148,12 +1220,22 @@ def main(argv=None):
     raw = proc.stdout or b""
     log = raw.decode("utf-8", errors="replace")
 
+    log_error = None
     if args.full_log:
-        parent = os.path.dirname(args.full_log)
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-        with open(args.full_log, "wb") as fh:
-            fh.write(raw)
+        # The command has already run: a bad log path must cost the log,
+        # never the report. Raising here threw a traceback, exited 1 instead
+        # of the command's code, and lost the result of a build that might
+        # have taken minutes.
+        try:
+            parent = os.path.dirname(args.full_log)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(args.full_log, "wb") as fh:
+                fh.write(raw)
+        except OSError as exc:
+            log_error = (args.full_log, exc.strerror or str(exc))
+            print("runlite: could not write --full-log %s: %s" % log_error,
+                  file=sys.stderr)
 
     ext = detect(cmd, log)
     problems, tail = ext.parse(log)
@@ -1162,7 +1244,7 @@ def main(argv=None):
         # test framework itself is missing); never report less than the log.
         problems, tail = parse_generic(log)
     lines = render(proc.returncode, wall, ext.name, problems, tail,
-                   args.max_tokens, args.full_log, len(raw))
+                   args.max_tokens, args.full_log, len(raw), log_error)
     try:  # tool logs carry symbols (✕, ●, ⎯) a cp1252 console default would eat
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):

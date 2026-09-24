@@ -7,6 +7,7 @@ trace text plus a handful of CLI checks.
 
 import io
 import os
+import re
 import sys
 
 import runlite
@@ -345,3 +346,47 @@ def test_output_is_deterministic_and_free_of_ansi(capsys):
     _, b = run_trace(capsys, "java_caused_by.txt")
     assert a == b
     assert "\x1b[" not in a
+
+
+def test_trace_floor_is_bounded_for_many_traces(capsys, monkeypatch):
+    """One summary per trace is O(traces); a log holding hundreds must
+    still fit, keep trace #1, and count the rest."""
+    one = trace_text("python_chained.txt")
+    stdin_of(monkeypatch, ("\n".join([one] * 200)).encode("utf-8"))
+    runlite.main(["trace", "--max-tokens", "150"])
+    out = capsys.readouterr().out.splitlines()
+    assert runlite._tokens_of(out) <= 150
+    assert out[0].startswith("# runlite trace: python, 200 traces")
+    assert re.match(r"^\(… \d+ more traces not listed for --max-tokens "
+                    r"150\)$", out[-1])
+
+
+UNRELATED = """2026-09-24 10:00:01 ERROR request failed
+Traceback (most recent call last):
+  File "/app/handlers.py", line 10, in handle
+    return parse(body)
+  File "/app/parser.py", line 42, in parse
+    raise ValueError("bad")
+ValueError: bad
+2026-09-24 10:05:00 INFO recovered
+2026-09-24 10:07:13 ERROR job crashed
+Traceback (most recent call last):
+  File "/app/jobs.py", line 7, in run
+    total = 1 / count
+ZeroDivisionError: division by zero
+"""
+
+
+def test_unrelated_python_tracebacks_are_separate_traces():
+    """Only a relation marker chains two tracebacks. Two errors minutes
+    apart in a service log folded into one 'chain', the later presented as
+    raised while handling the earlier - a causal claim the log never made."""
+    lang, traces = runlite.detect_traces(UNRELATED)
+    assert lang == "python" and len(traces) == 2
+    assert [t["sections"][0]["header"] for t in traces] == [
+        "ValueError: bad", "ZeroDivisionError: division by zero"]
+    assert all(len(t["sections"]) == 1 for t in traces)
+    # a real chain in the same log still stays one trace
+    _, chained = runlite.detect_traces(
+        UNRELATED + trace_text("python_chained.txt"))
+    assert len(chained) == 3 and len(chained[2]["sections"]) > 1

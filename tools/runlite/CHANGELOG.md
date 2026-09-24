@@ -1,5 +1,26 @@
 # runlite Changelog
 
+- 2026-09-24: v0.5.0 — fixes from a suite review, each pinned by a test
+  that fails on v0.4.0.
+  **`trace` invented causal chains.** Every Python traceback in the input
+  folded into one trace: two unrelated errors minutes apart in a service
+  log came out reversed, the later one presented as `raised` and the
+  earlier as its chained predecessor. Python only chains blocks across a
+  `During handling of…` / `direct cause` marker; without one, each block
+  is now its own trace, in log order.
+  **An explicit `--max-tokens` did not hold.** ADR-004's one-line-per-
+  problem rung is O(problems): 300 generic warnings printed 300 lines (304
+  with the header) against `--max-tokens 100`, and the generic extractor's
+  log tail vanished unannounced. ADR-006 adds a last rung that cuts the
+  list and counts the rest, announces a dropped tail, and bounds `trace`'s
+  summary floor the same way. A count line never replaces a single line.
+  **An unwritable `--full-log` lost the report.** The write raised after
+  the command had already run: a traceback, exit 1 instead of the
+  command's code, and no report. It now warns on stderr, notes
+  `# raw log: NOT written to PATH (reason)` in the header, and carries on.
+  Also: a generic one-liner no longer repeats the `path:line` its own text
+  already contains; `--version` reported 0.3.0 since v0.4.0 shipped.
+  6 new tests (82 total).
 - 2026-08-07: v0.4.0 — `runlite trace [FILE]` (or stdin) distills a stack
   trace runlite did not produce: one that arrived from a log file, CI, a
   service, a paste. Python, Java/JVM, Node, Go and Rust, parsed to the

@@ -1,11 +1,12 @@
 # runlite Status
 
-Implemented (v0.4.0) and passing tests.
+Implemented (v0.5.0) and passing tests.
 
 - `runlite.py` — single-file CLI covering all PRD modes: run + distilled
   report (exit code, wall time, problems with `file:line`), `--max-tokens`
-  budget (first problem full, rest one line each), `--full-log PATH` raw-log
-  export.
+  budget (first problem full, rest one line each, then the list itself cut
+  and counted — ADR-006), `--full-log PATH` raw-log export (a path that
+  cannot be written costs the log, never the report or the exit code).
 - Extractors: pytest, go test, cargo (compile errors + test panics), tsc,
   eslint, jest/vitest, gcc/clang, next build, generic fallback
   (error-pattern lines + last 20). Detection: command name, then log
@@ -28,13 +29,15 @@ Implemented (v0.4.0) and passing tests.
   propagated-first, regardless of how the language prints them. Exit 0
   distilled, 1 no recognizable trace, 125 internal. Unbounded by default;
   `--max-tokens` degrades to a summary line per exception, never below one
-  `path:line` each.
+  `path:line` each, and past that to the head of that list plus a count.
+  Python tracebacks chain only across a `During handling…`/`direct cause`
+  marker; unrelated tracebacks in one log are separate traces.
 - Known limit: JVM library detection is package-prefix based (JDK, test
   runners, build tools only), so third-party framework frames read as
   project frames — deliberate, see ADR-005.
-- Tests: `tests/test_runlite.py` (36) against canned logs in
-  `tests/fixtures/logs/`, `tests/test_runlite_trace.py` (40) against canned
-  traces in `tests/fixtures/traces/`; 76 total, no real toolchains needed.
+- Tests: `tests/test_runlite.py` (40) against canned logs in
+  `tests/fixtures/logs/`, `tests/test_runlite_trace.py` (42) against canned
+  traces in `tests/fixtures/traces/`; 82 total, no real toolchains needed.
 
 Not done / later: no packaging or PATH install story yet (run `./runlite.py`
 or symlink it); no timeout handling; no `--json` report.

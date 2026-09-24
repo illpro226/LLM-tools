@@ -72,3 +72,23 @@ Decision: over `--max-tokens`, keep failure #1 complete and collapse the rest
 to one line each.
 Consequences: predictable output shape under pressure; later failures remain
 discoverable via the raw log.
+
+## ADR-006: The budget ladder terminates — Accepted (2026-09-24)
+
+Context: ADR-004 collapses every problem after the first to one line, and
+`trace`'s floor was one summary line per trace. Both rungs are still
+O(input): 300 generic warnings printed 300 lines against `--max-tokens
+100`, and a log holding hundreds of tracebacks printed hundreds of summary
+lines. INVARIANTS.md requires every rung to be bounded. The rung also
+dropped the generic extractor's log tail without a word.
+Decision: after ADR-004's rungs (collapse, then shrink the first problem's
+detail), the one-line list is cut to what fits and the rest counted —
+`(… N of them not listed; the raw log has every one — rerun with
+--full-log PATH)`; `trace`'s summary floor does the same (`(… N more
+traces not listed …)`), always keeping trace #1. A count line never stands
+in for a single line — it costs about what it would hide — so at least two
+are hidden or none. A dropped log tail is announced.
+Consequences: an explicit `--max-tokens` now holds for any log size (the
+default stays unbounded — docs/decisions/0005). Failure #1 keeps its place
+at the top; what is cut is always the tail of the list, and the raw log
+remains the escape hatch ADR-002 promised.

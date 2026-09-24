@@ -352,3 +352,55 @@ def test_main_pins_stderr_to_utf8(tmp_path, monkeypatch):
         assert _sys.stderr.encoding.lower().replace("-", "") == "utf8"
     finally:
         _sys.stdout, _sys.stderr = saved
+
+
+# ------------------------------------------------ v0.3.1 review fixes
+
+def _warnings_log(n):
+    return "\n".join("warning: thing %d happened in src/a.py:%d" % (i, i)
+                     for i in range(n))
+
+
+def test_budget_terminates_with_many_problems():
+    """One line per problem is O(problems): 300 generic warnings printed
+    300 lines against --max-tokens 100. The last rung now cuts the list and
+    says so, and the dropped log tail is announced too."""
+    problems, tail = runlite.parse_generic(_warnings_log(300))
+    lines = runlite.render(3, 0.1, "generic", problems, tail, 100, "")
+    assert runlite._tokens_of(lines) <= 100
+    assert any(re.match(r"^\(… \d+ of them not listed; the raw log has "
+                        r"every one", l) for l in lines)
+    assert "(log tail dropped for --max-tokens 100)" in lines
+    assert lines[2] == "warning: thing 0 happened in src/a.py:0"
+
+
+def test_a_single_hidden_one_liner_is_shown_not_counted():
+    """A 'not listed' line costs what one one-liner does; never trade one
+    for the other."""
+    problems, tail = runlite.parse_generic(_warnings_log(2))
+    lines = runlite.render(1, 0.1, "generic", problems, [], 10, "")
+    assert "warning: thing 1 happened in src/a.py:1" in lines
+    assert not any("not listed" in l for l in lines)
+
+
+def test_generic_one_liner_does_not_repeat_its_ref():
+    problems, _ = runlite.parse_generic("error: bad thing at src/x.py:12\n")
+    assert runlite._one_line(problems[0]) == \
+        "error: bad thing at src/x.py:12"
+    pytest_like = runlite._problem("FAIL test_a", "tests/test_a.py:3")
+    assert runlite._one_line(pytest_like) == "FAIL test_a  tests/test_a.py:3"
+
+
+def test_unwritable_full_log_keeps_the_report_and_exit_code(tmp_path,
+                                                           capsys):
+    """The command has already run: a bad --full-log path raised a
+    traceback, exited 1, and lost the report."""
+    blocker = tmp_path / "a-file"
+    blocker.write_text("x")
+    dest = blocker / "sub" / "raw.log"              # parent is a file
+    code, out, err = run(["--full-log", str(dest), "--", sys.executable,
+                          "-c", "print('hi'); raise SystemExit(4)"], capsys)
+    assert code == 4
+    assert out.startswith("# runlite: exit 4 in ")
+    assert "# raw log: NOT written to %s (" % dest in out
+    assert "could not write --full-log" in err
