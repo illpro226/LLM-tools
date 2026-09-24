@@ -703,7 +703,7 @@ def test_bom_csv_select_finds_the_first_column(tmp_path, capsys):
     out = ok([str(p), "--select", "id,name"], capsys)
     assert out.splitlines() == ["id\tname", "1\ta", "2\tb"]
     summary = ok([str(p)], capsys)
-    assert "﻿" not in summary
+    assert "\ufeff" not in summary
 
 
 def test_bom_jsonl_record_zero_is_the_first_record(tmp_path, capsys):
