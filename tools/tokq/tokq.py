@@ -20,7 +20,7 @@ import argparse
 import os
 import sys
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 BYTES_PER_TOKEN = 3.7  # fallback heuristic divisor
 
@@ -139,7 +139,9 @@ def _fmt_rows(rows):
 def _walk(root):
     """Yield (relpath, size) for files under root, pruned and sorted.
 
-    relpath always uses "/" so output is identical across platforms.
+    relpath always uses "/" so output is identical across platforms. A file
+    that cannot be stat'ed (permissions, deleted mid-walk) is skipped rather
+    than ending the whole walk in a traceback.
     """
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
@@ -147,21 +149,33 @@ def _walk(root):
             full = os.path.join(dirpath, name)
             if os.path.islink(full):
                 continue
+            try:
+                size = os.path.getsize(full)
+            except OSError:
+                continue
             rel = os.path.relpath(full, root).replace(os.sep, "/")
-            yield rel, os.path.getsize(full)
+            yield rel, size
 
 
-def _emit(lines, max_tokens):
-    """Print lines, truncating to a rough token budget when asked."""
+def _emit(lines, max_tokens, keep_tail=0):
+    """Print lines, truncating to a rough token budget when asked.
+
+    The last `keep_tail` lines are the summary — the total, the finding
+    count, the BUDGET EXCEEDED verdict — and always print; rows are what
+    gets elided. Cutting from the end dropped exactly those lines, so a
+    capped `tokq lint --budget` exited 1 without saying which path failed.
+    """
     if max_tokens:
         budget = max_tokens * 4  # bytes, using the same 1 token ~ 4 bytes idea
-        used = 0
-        for i, line in enumerate(lines):
+        split = len(lines) - keep_tail
+        rows, tail = lines[:split], lines[split:]
+        used = sum(len(line) + 1 for line in tail)
+        for i, line in enumerate(rows):
             used += len(line) + 1
-            if used > budget and i < len(lines) - 1:
-                print("\n".join(lines[:i]))
-                print("(… %d more lines elided for --max-tokens %d)"
-                      % (len(lines) - i, max_tokens))
+            if used > budget and i < len(rows) - 1:
+                print("\n".join(rows[:i] + [
+                    "(… %d more lines elided for --max-tokens %d)"
+                    % (len(rows) - i, max_tokens)] + tail))
                 return
     print("\n".join(lines))
 
@@ -200,7 +214,7 @@ def cmd_meter(args):
         total += tokens
     n = len(rows)
     rows.append((total, "total (%d %s)" % (n, "file" if n == 1 else "files")))
-    _emit(_fmt_rows(rows), args.max_tokens)
+    _emit(_fmt_rows(rows), args.max_tokens, keep_tail=1)
     return status
 
 
@@ -243,9 +257,10 @@ def cmd_dir(args):
         pct = 100.0 * tokens / total if total else 0.0
         rows.append((tokens, "%5.1f%%  %s" % (pct, name)))
     lines = _fmt_rows(rows) if rows else ["(empty)"]
-    if len(entries) > len(shown):
+    more = len(entries) > len(shown)
+    if more:
         lines.append("(+%d more paths; use --top N)" % (len(entries) - len(shown)))
-    _emit(lines, args.max_tokens)
+    _emit(lines, args.max_tokens, keep_tail=int(more))
     return 0
 
 
@@ -327,6 +342,7 @@ def cmd_lint(args):
     findings = []      # (rule_id, path, tokens, message, suggestion)
     over_budget = []   # (path, tokens)
     grand_total = 0
+    errors = 0
 
     for path in args.paths:
         if os.path.isdir(path):
@@ -353,9 +369,13 @@ def cmd_lint(args):
             try:
                 path_tokens, finding = _lint_file(path, est, args.threshold)
             except OSError as exc:
+                # Report it and lint the rest, as the meter does: returning
+                # here threw away every finding already made for the paths
+                # before it.
                 print("tokq: %s: %s" % (path, exc.strerror or exc),
                       file=sys.stderr)
-                return 2
+                errors += 1
+                continue
             if finding:
                 findings.append((finding[0], path, path_tokens) + finding[1:])
         grand_total += path_tokens
@@ -372,7 +392,9 @@ def cmd_lint(args):
     for path, tokens in over_budget:
         lines.append("BUDGET EXCEEDED: %s is %d tokens > budget %d"
                      % (path, tokens, args.budget))
-    _emit(lines, args.max_tokens)
+    _emit(lines, args.max_tokens, keep_tail=1 + len(over_budget))
+    if errors:
+        return 2
     return 1 if over_budget else 0
 
 

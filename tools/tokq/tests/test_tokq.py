@@ -238,3 +238,65 @@ def test_pin_utf8_covers_stderr():
         assert _sys.stderr.encoding.lower().replace("-", "") == "utf8"
     finally:
         _sys.stdout, _sys.stderr = saved
+
+
+# ------------------------------------------------ v0.1.2 review fixes
+
+def _many_files(tmp_path, n=30, size=4000):
+    for i in range(n):
+        (tmp_path / ("f%02d.txt" % i)).write_text("x" * size, encoding="utf-8")
+    return sorted(str(p) for p in tmp_path.iterdir())
+
+
+def test_capped_meter_keeps_the_total(tmp_path, capsys):
+    """The cap cut from the end, and the total was the last line."""
+    paths = _many_files(tmp_path)
+    code, out, _ = run(["--tokenizer", "heuristic", "--max-tokens", "40"]
+                       + paths, capsys)
+    lines = out.splitlines()
+    assert code == 0
+    assert lines[-1].endswith("total (30 files)")
+    assert any("elided for --max-tokens 40" in l for l in lines)
+
+
+def test_capped_lint_keeps_summary_and_budget_verdict(tmp_path, capsys):
+    """A capped `lint --budget` exited 1 with the BUDGET EXCEEDED line cut."""
+    _many_files(tmp_path, size=20000)
+    code, out, _ = run(["lint", str(tmp_path), "--tokenizer", "heuristic",
+                        "--budget", "100", "--max-tokens", "40"], capsys)
+    lines = out.splitlines()
+    assert code == 1
+    assert lines[-1].startswith("BUDGET EXCEEDED: ")
+    assert lines[-2].endswith("tokens") and "finding" in lines[-2]
+
+
+def test_capped_dir_keeps_the_more_paths_line(tmp_path, capsys):
+    _many_files(tmp_path)
+    code, out, _ = run(["dir", str(tmp_path), "--top", "25",
+                        "--max-tokens", "30"], capsys)
+    assert out.splitlines()[-1] == "(+5 more paths; use --top N)"
+
+
+def test_lint_reports_the_rest_after_a_missing_path(tmp_path, capsys):
+    """A missing path returned 2 at once, discarding findings already made."""
+    big = tmp_path / "big.py"
+    big.write_text("x = 1\n" * 5000, encoding="utf-8")
+    code, out, err = run(["lint", str(tmp_path / "nope.txt"), str(big),
+                          "--tokenizer", "heuristic"], capsys)
+    assert code == 2
+    assert "nope.txt" in err
+    assert "BIG-FILE" in out and "1 finding" in out
+
+
+def test_walk_skips_a_file_that_cannot_be_statted(tmp_path, monkeypatch):
+    (tmp_path / "ok.txt").write_text("a", encoding="utf-8")
+    (tmp_path / "gone.txt").write_text("b", encoding="utf-8")
+    real = os.path.getsize
+
+    def flaky(path):
+        if path.endswith("gone.txt"):
+            raise PermissionError(13, "Permission denied")
+        return real(path)
+
+    monkeypatch.setattr(tokq.os.path, "getsize", flaky)
+    assert [rel for rel, _ in tokq._walk(str(tmp_path))] == ["ok.txt"]
