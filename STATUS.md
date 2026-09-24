@@ -1,6 +1,6 @@
 # STATUS — LLM-tools
 
-Last updated: 2026-09-11
+Last updated: 2026-09-24
 
 Written to be read by an agent starting cold. Keep it under a screen. Each
 tool's own `tools/<name>/STATUS.md` is the authority on that tool — this file is
@@ -22,6 +22,14 @@ the suite.
 - As of this adoption the repo carries the CFS contract: `AGENTS.md` is the
   contract at 80 lines, `CLAUDE.md` is one line, all six doc kinds exist, and
   both gates run.
+- `python scripts/test_all.py` runs every suite in parallel and states the
+  result in one screen: all nine pass, 468 tests (533 with `--archived`),
+  2026-09-24. A review that day fixed bugs in all nine tools — among them
+  an sgrep budget loop quadratic in matching files (8 minutes at 20,000),
+  an sgrep stderr deadlock, structo and xread misreading UTF-8 BOM files,
+  gitbrief's `+0 -0` counts from a subdirectory, runlite `trace` inventing
+  exception chains, and budget floors in five tools that were still
+  O(input); each tool's CHANGELOG has its entry.
 
 ## Broken / stale
 
@@ -41,14 +49,9 @@ the suite.
   whether it should be archived.
 - `doc/` still exists as a compatibility alias for `docs/`. Nothing has been
   moved out of it and nothing has decided when it goes away.
-- The suite has no repo-wide test command. Running everything means visiting
-  nine directories, so nobody does it, and there is no recorded run of all nine
-  suites passing at the same commit.
 
 ## Next
 
 - Decide whether the MCP adapter (`0004`) is still wanted, or supersede it. It
   has been accepted-and-unbuilt long enough that the acceptance is stale.
-- Give the suite one command that runs every tool's tests, so "all nine pass"
-  becomes a thing that can be stated with evidence.
 - Retire `doc/` and `START.md`, or write down why they stay.

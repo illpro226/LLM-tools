@@ -26,13 +26,13 @@ and keep doc links repo-relative.
 
 ```
 setup:  (none — stdlib-only Python, no install step; there is no linter)
-test:   python -m pytest tools/xread
+test:   python scripts/test_all.py     (all nine; --archived adds rq/testmap)
 status: python scripts/check_status.py .
 env:    python scripts/check_env.py .
 ```
 
-No repo-wide build system: `cd tools/<name>` then `python -m pytest`, and
-archived tools the same way from `archive/rq/` and `archive/testmap/`. `--help`
+No repo-wide build system. One tool: `cd tools/<name>` then `python -m
+pytest` (archived tools the same way from `archive/rq/`, `archive/testmap/`). `--help`
 carries the current flags, so they are not restated anywhere.
 
 ## Environment — what a cold agent would otherwise have to discover
