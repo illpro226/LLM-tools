@@ -104,3 +104,18 @@ the first 18 days of use, 1.4%% passed `--max-tokens`, while 3%% of calls
 produced 8%% of all output. An opt-in cap protects only the caller who
 already suspected the output would be large — the one who did not need
 protecting.
+
+## ADR-008: The tree rung caps entries per directory — Accepted (2026-09-24)
+
+Context: ADR-003's last rung is tree-only, and its tree shrinks by
+collapsing depth. Depth never shrinks a directory's *own* listing, so a
+root holding 3,000 files printed ~12,800 tokens against the 3,000 default:
+the ladder ended in a rung that was still O(files) (INVARIANTS.md).
+Decision: past depth 1, the tree lists at most N entries per directory
+(dirs and files each), the rest counted as `… (+K more files)`; N is the
+largest that fits, found by binary search, and the output names
+`--max-tokens`. The half-budget reservation for outlines uses the same
+fit, and is skipped when there are no outlines to reserve it for.
+Consequences: every budget now terminates, flooring at depth 1 with one
+entry of each kind — constant in the file count.
+

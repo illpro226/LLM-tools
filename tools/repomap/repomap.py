@@ -24,12 +24,13 @@ All non-Python extraction is top-level-only and best-effort by design.
 """
 
 import argparse
+import collections
 import fnmatch
 import os
 import re
 import sys
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 # ADR-007: the token cap is on by default. An orientation map is read at
 # the start of a task, when context is most valuable; 3000 covers a
@@ -133,6 +134,21 @@ def _py_sig(lines, lineno):
     return _clean_sig("".join(out))
 
 
+def _py_top_level(ast, node):
+    """Module-level defs, including those under `if`/`try`/`with` — a
+    platform- or import-conditional def is still the module's name."""
+    blocks = tuple(getattr(ast, n) for n in ("If", "Try", "TryStar",
+                                              "ExceptHandler", "With",
+                                              "AsyncWith")
+                   if hasattr(ast, n))
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
+                              ast.ClassDef)):
+            yield child
+        elif isinstance(child, blocks):
+            yield from _py_top_level(ast, child)
+
+
 def extract_python(source, lines):
     import ast
     try:
@@ -140,7 +156,7 @@ def extract_python(source, lines):
     except SyntaxError:
         return []
     syms = []
-    for node in tree.body:
+    for node in _py_top_level(ast, tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
                              ast.ClassDef)):
             kind = "class" if isinstance(node, ast.ClassDef) else "func"
@@ -215,15 +231,30 @@ _TS_DECLS = (
 )
 
 
+def _template_close(line):
+    """Index of the backtick closing a template literal, or -1."""
+    i = 0
+    while i < len(line):
+        if line[i] == "\\":
+            i += 2
+            continue
+        if line[i] == "`":
+            return i
+        i += 1
+    return -1
+
+
 def extract_ts(source, lines):
     syms = []
     depth = 0
     state = {"comment": False, "template": False}
     for i, raw in enumerate(lines, 1):
         if state["template"]:
-            if "`" in raw:
-                state["template"] = False
-            continue
+            close = _template_close(raw)
+            if close == -1:
+                continue
+            state["template"] = False
+            raw = raw[close + 1:]   # braces after the backtick still count
         code = _strip_c_noise(raw, state).strip()
         if depth == 0 and code:
             for kind, rx in _TS_DECLS:
@@ -459,7 +490,10 @@ def scan(root, pats):
                     head = fh.read(8192)
                 if b"\0" in head:
                     continue
-                with open(path, encoding="utf-8", errors="replace") as fh:
+                # utf-8-sig: a BOM is U+FEFF to ast.parse, and a BOM'd
+                # Python file used to outline as empty.
+                with open(path, encoding="utf-8-sig",
+                          errors="replace") as fh:
                     source = fh.read()
             except OSError:
                 continue
@@ -486,15 +520,20 @@ def scan(root, pats):
 # index-backed ranking will slot in.
 
 def rank(files):
+    # Score = over every *other* file: +2 if it mentions this file's stem,
+    # +1 per top-level name of this file it mentions. Counted through each
+    # identifier's document frequency (minus this file's own use), which
+    # is the same number the pairwise loop produced in O(files²) — 3.3 s
+    # of a 12 s run over Python's 1,853-file stdlib.
+    df = collections.Counter()
+    for g in files:
+        df.update(g["tokens"])
     for f in files:
+        toks = f["tokens"]
         score = 0
-        for g in files:
-            if g is f:
-                continue
-            toks = g["tokens"]
-            if f["stem"] and f["stem"] in toks:
-                score += 2
-            score += sum(1 for n in f["names"] if n in toks)
+        if f["stem"]:
+            score += 2 * (df[f["stem"]] - (f["stem"] in toks))
+        score += sum(df[n] - (n in toks) for n in f["names"])
         f["score"] = score
     files.sort(key=lambda f: (-f["score"], f["rel"]))
 
@@ -513,12 +552,19 @@ def _related(drel, focus):
             or drel.startswith(focus + "/"))
 
 
-def _tree_lines(tree, focus, depth_limit):
+def _tree_lines(tree, focus, depth_limit, cap=None):
+    """`cap` limits the entries listed per directory (dirs and files each),
+    the rest counted: collapsing depth alone never shrinks a directory's
+    own listing, so a root holding 3,000 files ignored every budget."""
     out = []
+
+    def more(indent, n, kind):
+        return "%s… (+%d more %s%s)" % (indent, n, kind, "" if n == 1 else "s")
 
     def walk(node, rel, depth):
         indent = "  " * depth
-        for d in sorted(node["dirs"]):
+        dirs = sorted(node["dirs"])
+        for d in dirs[:cap]:
             drel = (rel + "/" + d).lstrip("/")
             child = node["dirs"][d]
             collapse = False
@@ -533,8 +579,13 @@ def _tree_lines(tree, focus, depth_limit):
             else:
                 out.append("%s%s/" % (indent, d))
                 walk(child, drel, depth + 1)
-        for fn in sorted(node["files"]):
+        if cap is not None and len(dirs) > cap:
+            out.append(more(indent, len(dirs) - cap, "dir"))
+        files = sorted(node["files"])
+        for fn in files[:cap]:
             out.append("%s%s" % (indent, fn))
+        if cap is not None and len(files) > cap:
+            out.append(more(indent, len(files) - cap, "file"))
 
     walk(tree, "", 1)
     return out
@@ -590,13 +641,13 @@ def _file_block(f, prefix, detail):
     return lines
 
 
-def _render(ctx, stage, k, depth_limit):
+def _render(ctx, stage, k, depth_limit, cap=None):
     lines = ["repomap %s — %d source files / %d files  "
              "(ranking: heuristic, identifier references)"
              % (ctx["label"], ctx["n_source"], ctx["n_total"]), ""]
     root_label = ctx["label"].replace("\\", "/").rstrip("/") or "."
     lines.append(root_label + "/")
-    lines += _tree_lines(ctx["tree"], ctx["focus"], depth_limit)
+    lines += _tree_lines(ctx["tree"], ctx["focus"], depth_limit, cap)
     order = ctx["order"]
     collapsed = 0
     if stage != "tree":
@@ -624,6 +675,10 @@ def _render(ctx, stage, k, depth_limit):
         notes.append(note + ")")
     elif stage == "tree" and ctx["budget"]:
         notes.append("(tree only for --max-tokens %d)" % ctx["budget"])
+    if cap is not None:
+        notes.append("(directory listings capped at %d entr%s each for "
+                     "--max-tokens %d)" % (cap, "y" if cap == 1 else "ies",
+                                           ctx["budget"]))
     if notes:
         lines.append("")
         lines += notes
@@ -638,38 +693,52 @@ def build_output(ctx):
     if not budget or _est(lines) <= budget:
         return lines
 
-    # Reserve at least half the budget for outlines by collapsing deep
-    # tree levels before sacrificing any outline content.
-    tree_depth = None
-    for depth in (None, 3, 2, 1):
-        tree_depth = depth
-        if _est(_render(ctx, "tree", 0, depth)) <= budget // 2:
-            break
+    if n:
+        # Reserve at least half the budget for outlines by collapsing deep
+        # tree levels before sacrificing any outline content. (With no
+        # outlines to make room for, the tree gets all of it, below.)
+        tree_depth, tree_cap = _fit_tree(ctx, budget // 2)
 
-    def search(stage, floor):
-        best = None
-        lo, hi = floor, n
-        while lo <= hi:
-            mid = (lo + hi) // 2
-            cand = _render(ctx, stage, mid, tree_depth)
-            if _est(cand) <= budget:
-                best = cand
-                lo = mid + 1
-            else:
-                hi = mid - 1
-        return best
+        def search(stage, floor):
+            best = None
+            lo, hi = floor, n
+            while lo <= hi:
+                mid = (lo + hi) // 2
+                cand = _render(ctx, stage, mid, tree_depth, tree_cap)
+                if _est(cand) <= budget:
+                    best = cand
+                    lo = mid + 1
+                else:
+                    hi = mid - 1
+            return best
 
-    best = search("full", min(FULL_FLOOR, n))
-    if best:
-        return best
-    best = search("names", 1)
-    if best:
-        return best
+        best = search("full", min(FULL_FLOOR, n))
+        if best:
+            return best
+        best = search("names", 1)
+        if best:
+            return best
+    depth, cap = _fit_tree(ctx, budget)
+    return _render(ctx, "tree", 0, depth, cap)
+
+
+def _fit_tree(ctx, limit):
+    """(depth_limit, cap) of the most detailed tree-only render within
+    `limit`: shallower first, then fewer entries listed per directory —
+    the rung that makes the ladder terminate on a wide directory. Floors
+    at depth 1 with one entry of each kind, which is O(1)."""
     for depth in (None, 3, 2, 1):
-        cand = _render(ctx, "tree", 0, depth)
-        if _est(cand) <= budget:
-            return cand
-    return _render(ctx, "tree", 0, 1)
+        if _est(_render(ctx, "tree", 0, depth)) <= limit:
+            return depth, None
+    root = ctx["tree"]
+    lo, hi, best = 1, max(len(root["dirs"]), len(root["files"]), 1), 1
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if _est(_render(ctx, "tree", 0, 1, mid)) <= limit:
+            best, lo = mid, mid + 1
+        else:
+            hi = mid - 1
+    return 1, best
 
 
 # --------------------------------------------------------------------- CLI

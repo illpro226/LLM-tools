@@ -1,5 +1,24 @@
 # repomap Changelog
 
+- 2026-09-24: v0.4.0 — fixes from a suite review, each pinned by a test
+  that fails on v0.3.0 (the ranking test pins equality with the old
+  scores instead).
+  **The ladder did not terminate on a wide directory.** Tree-only
+  collapsed depth, which never shrinks a directory's own listing: a root
+  of 3,000 files printed ~12,800 tokens against the 3,000 default, under a
+  note claiming the budget. ADR-008 adds a last rung that lists at most N
+  entries per directory (the largest N that fits) and counts the rest.
+  **Ranking was O(files²).** Each file's score walked every other file:
+  3.3 s of a 12 s run over Python's 1,853-file stdlib. Scores now come
+  from identifier document frequencies — identical numbers (pinned against
+  the pairwise count on the fixture and the whole suite), linear time.
+  **A BOM'd Python file outlined as empty**, and defs under module-level
+  `if`/`try`/`with` (platform splits, ImportError fallbacks) were missing.
+  Files are read as `utf-8-sig`; those blocks are walked.
+  **JS/TS depth drifted after a multi-line template literal**: the line
+  holding the closing backtick was skipped whole, so a `{` after it never
+  opened and a nested declaration read as top-level.
+  4 new tests (29 total).
 - 2026-07-31: v0.3.0 — `--max-tokens` now defaults to 3000 instead of unbounded
   (ADR-007, docs/decisions/0005-budgets-on-by-default.md); `--max-tokens 0`
   restores the old behaviour. `repomap .` on this repo drops from ~15,000

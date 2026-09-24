@@ -321,3 +321,89 @@ def test_small_repo_is_untouched_by_the_default(tmp_path, capsys):
     _, deflt, _ = run([str(tmp_path)], capsys)
     _, unbounded, _ = run([str(tmp_path), "--max-tokens", "0"], capsys)
     assert deflt == unbounded
+
+
+# ------------------------------------------------ v0.4.0 review fixes
+
+def _pairwise_rank(files):
+    """The pre-0.4.0 O(files²) ranking, kept as the reference the
+    document-frequency version must reproduce exactly."""
+    scores = {}
+    for f in files:
+        score = 0
+        for g in files:
+            if g is f:
+                continue
+            if f["stem"] and f["stem"] in g["tokens"]:
+                score += 2
+            score += sum(1 for n in f["names"] if n in g["tokens"])
+        scores[f["rel"]] = score
+    return scores
+
+
+def test_document_frequency_rank_matches_the_pairwise_scores():
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for root in (REPO, os.path.dirname(here)):       # fixture + all tools
+        _, files, _ = repomap.scan(root, repomap._load_gitignore(root))
+        want = _pairwise_rank(files)
+        repomap.rank(files)
+        assert {f["rel"]: f["score"] for f in files} == want
+
+
+def test_wide_flat_directory_fits_the_budget(tmp_path, capsys):
+    """Collapsing depth never shrinks a directory's own listing, so a root
+    of 3,000 files printed ~12,800 tokens against the 3,000 default."""
+    for i in range(3000):
+        (tmp_path / ("f_%04d.txt" % i)).write_text("x", encoding="utf-8")
+    for budget in (3000, 400, 60):
+        code, out, _ = run([str(tmp_path), "--max-tokens", str(budget)],
+                           capsys)
+        assert code == 0
+        lines = out.splitlines()
+        if budget >= 400:
+            assert repomap._est(lines) <= budget
+        else:
+            # The floor: header, root, one entry, its count, two notes —
+            # constant in the file count (its size is the tmp path's).
+            assert len(lines) <= 8
+        assert re.search(r"… \(\+\d+ more files\)", out)
+        assert "--max-tokens %d)" % budget in lines[-1]
+
+
+def test_bom_and_conditional_python_defs_are_outlined(tmp_path, capsys):
+    (tmp_path / "bom.py").write_bytes(
+        b"\xef\xbb\xbfdef first():\n    return 1\n")
+    (tmp_path / "cond.py").write_text(
+        "import sys\n\nif sys.platform == 'win32':\n"
+        "    def helper():\n        return 1\nelse:\n"
+        "    def helper():\n        return 2\n\n"
+        "try:\n    import tomllib\nexcept ImportError:\n"
+        "    def load():\n        return {}\n", encoding="utf-8")
+    code, out, _ = run([str(tmp_path), "--max-tokens", "0"], capsys)
+    assert code == 0
+    assert re.search(r"bom\.py:1 def first\(\)", out)
+    assert len(re.findall(r"cond\.py:\d+ def helper\(\)", out)) == 2
+    assert re.search(r"cond\.py:13 def load\(\)", out)
+
+
+def test_ts_decl_after_a_multiline_template_is_top_level(tmp_path, capsys):
+    """The line closing a template literal was skipped whole; a `{` after
+    the backtick never opened, depth went negative-clamped, and the next
+    nested declaration could read as top-level (or the next top-level one
+    be missed once depth drifted up)."""
+    (tmp_path / "t.ts").write_text(
+        "export function first() {\n"
+        "  const q = sql(`SELECT *\n"
+        "    FROM t`).then((r) => {\n"
+        "    return r;\n"
+        "  });\n"
+        "  function inner() { return q; }\n"   # depth 1, read as 0 before
+        "  return inner();\n"
+        "}\n"
+        "export function second() {\n"
+        "  return 2;\n"
+        "}\n", encoding="utf-8")
+    code, out, _ = run([str(tmp_path), "--max-tokens", "0"], capsys)
+    assert code == 0
+    assert "inner" not in out
+    assert re.search(r"t\.ts:9 export function second\(\)", out)
