@@ -583,3 +583,147 @@ def test_constants_do_not_shadow_functions(capsys):
     kinds = [l.split()[1] for l in lines if len(l.split()) > 1]
     assert kinds[0] == "constant"   # source order: SIMPLE is line 5
     assert "class" in kinds and "function" in kinds
+
+
+# ------------------------------------------------ v0.5.0 review fixes
+
+def _write(tmp_path, name, text, bom=False):
+    p = tmp_path / name
+    p.write_bytes((b"\xef\xbb\xbf" if bom else b"") + text.encode("utf-8"))
+    return str(p)
+
+
+def test_bom_python_file_parses(tmp_path, capsys):
+    """Windows editors save UTF-8 with a BOM; ast.parse rejected U+FEFF and
+    every mode failed with a parse error."""
+    p = _write(tmp_path, "bom.py", "import os\n\ndef foo():\n    return 1\n",
+               bom=True)
+    code, out, err = run([p, "--symbol", "foo"], capsys)
+    assert code == 0, err
+    assert out.splitlines()[1:] == ["def foo():", "    return 1"]
+
+
+def test_bom_ts_first_line_declaration_is_found(tmp_path, capsys):
+    p = _write(tmp_path, "bom.ts", "export function first() {\n  return 1;\n}\n",
+               bom=True)
+    code, out, _ = run([p, "--symbol", "first"], capsys)
+    assert code == 0
+    assert "export function first() {" in out
+
+
+CONDITIONAL = """import sys
+
+if sys.platform == "win32":
+    def helper():
+        return 1
+else:
+    def helper():
+        return 2
+
+try:
+    import tomllib
+    HAS_TOML = True
+except ImportError:
+    HAS_TOML = False
+
+class Box:
+    if sys.version_info >= (3, 11):
+        def fancy(self):
+            return 1
+"""
+
+
+def test_conditional_definitions_are_symbols(tmp_path, capsys):
+    """Defs under a module-level if/try are the file's definitions; they
+    used to be invisible to --symbol and --headings alike."""
+    p = _write(tmp_path, "cond.py", CONDITIONAL)
+    code, out, _ = run([p, "--headings"], capsys)
+    assert code == 0
+    assert "function helper [4-5]" in out and "function helper [7-8]" in out
+    assert "constant HAS_TOML [12-12]" in out
+    assert "constant HAS_TOML [14-14]" in out
+    assert "function fancy" in out
+    code, out, _ = run([p, "--symbol", "helper"], capsys)
+    assert code == 0
+    assert "return 1" in out and "return 2" in out     # both branches
+    code, out, _ = run([p, "--symbol", "Box.fancy"], capsys)
+    assert code == 0 and "def fancy(self):" in out
+
+
+def test_code_after_a_closing_template_backtick_counts(tmp_path, capsys):
+    """The line closing a multi-line template literal was skipped whole, so
+    the `{` after its backtick never opened and the span ended early."""
+    src = ("export function first() {\n"
+           "  const q = sql(`SELECT *\n"
+           "    FROM t`).then((r) => {\n"
+           "    return r;\n"
+           "  });\n"
+           "  return q;\n"
+           "}\n"
+           "\n"
+           "export function second() {\n"
+           "  return 2;\n"
+           "}\n")
+    p = _write(tmp_path, "tpl.ts", src)
+    code, out, _ = run([p, "--headings"], capsys)
+    assert code == 0
+    assert "function first [1-7]" in out
+    assert "function second [9-11]" in out
+
+
+def test_lines_zero_is_read_as_line_one(tmp_path, capsys):
+    p = _write(tmp_path, "a.py", "x = 1\ny = 2\nz = 3\n")
+    code, out, _ = run([p, "--lines", "0-2"], capsys)
+    assert code == 0
+    assert out.splitlines() == ["== %s:1-2 ==" % p, "x = 1", "y = 2"]
+
+
+def test_directory_argument_is_named_as_such(tmp_path, capsys):
+    code, out, err = run([str(tmp_path), "--headings"], capsys)
+    assert code == 2 and out == ""
+    assert "is a directory" in err
+
+
+def test_one_line_gap_is_singular(tmp_path, capsys):
+    p = _write(tmp_path, "g.py", "def a():\n    pass\n\ndef b():\n    pass\n")
+    code, out, _ = run([p, "--symbol", "a", "--symbol", "b"], capsys)
+    assert code == 0
+    assert "… 1 line elided …" in out.splitlines()
+
+
+def test_nested_fence_does_not_close_early(tmp_path, capsys):
+    """A ```` block that shows a ``` block must stay open past the inner
+    fence, or the `#` lines inside it become headings."""
+    doc = ("# Real\n\n````markdown\n```\ncode\n```\n# Not a heading\n````\n\n"
+           "## Also real\n~~~\n```\n# Still code\n~~~\n")
+    p = _write(tmp_path, "d.md", doc)
+    code, out, _ = run([p, "--headings"], capsys)
+    assert code == 0
+    names = [l.split("  ", 1)[1] for l in out.splitlines()]
+    assert names == ["# Real", "## Also real"]
+
+
+def test_outline_over_budget_hides_nested_before_truncating(tmp_path, capsys):
+    """Cutting the outline at the budget lost the whole back half of a big
+    file. Nested members go first, so every top-level symbol survives."""
+    parts = []
+    for c in range(6):
+        parts.append("class Big%d:" % c)
+        parts += ["    def method_%d_%d(self):\n        return 0" % (c, m)
+                  for m in range(60)]
+    parts += ["def tail_%d():\n    return 0" % f for f in range(40)]
+    p = _write(tmp_path, "big.py", "\n".join(parts) + "\n")
+    code, out, _ = run([p, "--headings"], capsys)
+    assert code == 0
+    lines = out.splitlines()
+    assert xread._tokens_of(lines) <= xread.DEFAULT_MAX_TOKENS
+    assert sum(1 for l in lines if " class Big" in l) == 6
+    assert any("tail_39" in l for l in lines)            # the end survives
+    assert lines[-1].startswith("(… 360 nested entries hidden for "
+                                "--max-tokens")
+    # and a budget too small even for the top level still ends in a note
+    code, out, _ = run([p, "--headings", "--max-tokens", "60"], capsys)
+    tight = out.splitlines()
+    assert xread._tokens_of(tight) <= 60
+    assert re.match(r"^\(… \d+ more outline entries elided for "
+                    r"--max-tokens 60\)$", tight[-1])

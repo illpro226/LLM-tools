@@ -1,5 +1,31 @@
 # xread Changelog
 
+- 2026-09-24: v0.5.0 - fixes from a suite review, each pinned by a test
+  that fails on v0.4.2.
+  **Conditional definitions were invisible.** Only direct children of the
+  module and of classes were visited, so `def` and constants under
+  `if sys.platform ...`, `try: ... except ImportError:` or `with` blocks
+  were missing from `--headings` and `--symbol` said "not found". Those
+  bodies are now walked with the enclosing prefix; both branches of a
+  platform split are returned.
+  **A UTF-8 BOM broke the file.** `ast.parse` rejects U+FEFF, so every mode
+  on a BOM-prefixed Python file failed with a parse error, and a JS
+  declaration on line 1 hid behind it. Files are read as `utf-8-sig`.
+  **JS/TS spans ended early after a multi-line template literal.** The line
+  holding the closing backtick was skipped whole, so a `{` after it (as in
+  `` `).then(() => { ``) never opened and the enclosing function's span was
+  cut short. The rest of that line is now scanned.
+  **An over-budget outline lost the back half of the file.** `--headings`
+  cut the list at the budget; a caller could not know what it never saw.
+  It now hides the deepest entries first (announced, naming
+  `--max-tokens`), so every top-level symbol survives, and truncates the
+  top level only as the last rung.
+  Smaller: `--lines 0-N` printed a header over nothing (now read as line
+  1); a directory argument reported Windows' "Permission denied" (now "is
+  a directory"); markdown fences follow CommonMark, so a ```` block that
+  shows a ``` block no longer closes early and turns its `#` lines into
+  headings; `… 1 line elided …` is singular. 9 new tests (61 total; STATUS
+  had drifted to 41).
 - 2026-09-11: v0.4.2 - `--symbol` and `--headings` now see module-level
   constants in Python files, not just functions and classes. These are a
   file's configuration surface - rule regexes, tunables, extension sets -

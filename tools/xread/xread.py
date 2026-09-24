@@ -35,7 +35,7 @@ import os
 import re
 import sys
 
-__version__ = "0.4.2"
+__version__ = "0.5.0"
 
 PY_EXTS = {".py", ".pyi"}
 TS_EXTS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"}
@@ -92,14 +92,28 @@ def _assigned_names(target):
     return []
 
 
+def _py_blocks(ast):
+    """Statement types whose bodies still define names in the enclosing
+    scope: `if sys.platform ...: def f()`, `try: import x / except
+    ImportError: def x()`, `HAS_X = True/False` fallbacks."""
+    names = ("If", "Try", "TryStar", "ExceptHandler", "With", "AsyncWith")
+    return tuple(getattr(ast, n) for n in names if hasattr(ast, n))
+
+
 def parse_python(source, lines):
     import ast
     symbols = []
+    blocks = _py_blocks(ast)
 
     def visit(node, prefix):
         for child in ast.iter_child_nodes(node):
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
-                                  ast.ClassDef)):
+            if isinstance(child, blocks):
+                # A definition guarded by a condition is still the file's
+                # definition; skipping these made `--symbol` report "not
+                # found" for every platform- or import-conditional name.
+                visit(child, prefix)
+            elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                    ast.ClassDef)):
                 start = child.lineno
                 if child.decorator_list:
                     start = min(start, child.decorator_list[0].lineno)
@@ -216,6 +230,19 @@ def _strip_ts_noise(line, state):
     return "".join(out)
 
 
+def _template_close(line):
+    """Index of the backtick closing a template literal, or -1."""
+    i = 0
+    while i < len(line):
+        if line[i] == "\\":
+            i += 2
+            continue
+        if line[i] == "`":
+            return i
+        i += 1
+    return -1
+
+
 def parse_ts(source, lines):
     symbols = []
     stack = []  # open symbols: [(symbol, close_depth)]
@@ -224,9 +251,14 @@ def parse_ts(source, lines):
 
     for i, raw in enumerate(lines, 1):
         if state["template"]:  # inside a multi-line template literal
-            if "`" in raw:
-                state["template"] = False
-            continue
+            close = _template_close(raw)
+            if close == -1:
+                continue
+            state["template"] = False
+            # Code after the closing backtick still counts: skipping the
+            # whole line lost the `{` of `` `).then(() => { `` and ended the
+            # enclosing function's span early.
+            raw = raw[close + 1:]
         code = _strip_ts_noise(raw, state).strip()
 
         decl = None
@@ -265,17 +297,28 @@ def parse_ts(source, lines):
 # ---------------------------------------------------------- markdown parser
 
 _MD_HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
-_MD_FENCE = re.compile(r"^\s*(```|~~~)")
+_MD_FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
 
 
 def parse_markdown(source, lines):
     headings = []
-    in_fence = False
+    fence = None  # (char, length) of the open fence
     for i, line in enumerate(lines, 1):
-        if _MD_FENCE.match(line):
-            in_fence = not in_fence
-            continue
-        if in_fence:
+        m = _MD_FENCE.match(line)
+        if m:
+            run = m.group(1)
+            if fence is None:
+                fence = (run[0], len(run))
+                continue
+            # CommonMark: only a fence of the same character, at least as
+            # long, with nothing after it closes the block. Toggling on any
+            # fence let a ```` block that *shows* a ``` block close early,
+            # and the `# lines` inside it became headings.
+            if (run[0] == fence[0] and len(run) >= fence[1]
+                    and not m.group(2).strip()):
+                fence = None
+                continue
+        if fence is not None:
             continue
         m = _MD_HEADING.match(line)
         if m:
@@ -345,8 +388,16 @@ def load(paths):
     """Return [(path, lines, symbols|None)] in argument order."""
     files = []
     for path in paths:
+        if os.path.isdir(path):
+            # Windows reports opening a directory as "Permission denied",
+            # which sends the caller after an access problem that isn't one.
+            raise XreadError("%s: is a directory (xread reads files; "
+                             "repomap outlines a directory)" % path)
         try:
-            with open(path, encoding="utf-8", errors="replace") as fh:
+            # utf-8-sig: identical to utf-8 without a byte-order mark, and
+            # with one, ast.parse no longer fails on U+FEFF and a JS
+            # declaration on line 1 no longer hides behind it.
+            with open(path, encoding="utf-8-sig", errors="replace") as fh:
                 source = fh.read()
         except OSError as exc:
             raise XreadError("%s: %s" % (path, exc.strerror or exc))
@@ -396,6 +447,9 @@ def resolve_lines(files, spec, scope):
     b = int(m.group(2)) if m.group(2) else a
     if b < a:
         a, b = b, a
+    # Lines are 1-based; `0-3` printed a header over an empty slice. The
+    # intent is unambiguous, so serve it rather than spend a round-trip.
+    a, b = max(a, 1), max(b, 1)
     regions = []
     for idx, (path, lines, symbols) in enumerate(files):
         if a > len(lines):
@@ -525,12 +579,14 @@ def render(regions, sources):
         prev_end = None
         for r in regs:
             if prev_end is not None:
-                out.append("… %d lines elided …" % (r["start"] - prev_end - 1))
+                gap = r["start"] - prev_end - 1
+                out.append("… %d line%s elided …" % (gap, "s"[: gap != 1]))
             out.append("== %s:%d-%d ==" % (path, r["start"], r["end"]))
             out.extend(sources[path][r["start"] - 1:r["end"]])
             if r.get("trimmed_from"):
-                out.append("… %d more lines elided (--max-tokens) …"
-                           % (r["trimmed_from"] - r["end"]))
+                gap = r["trimmed_from"] - r["end"]
+                out.append("… %d more line%s elided (--max-tokens) …"
+                           % (gap, "s"[: gap != 1]))
             prev_end = r["end"]
     return out
 
@@ -587,7 +643,7 @@ def apply_budget(regions, sources, max_tokens):
 # --------------------------------------------------------------------- CLI
 
 def _code_outline(path, symbols):
-    """One line per symbol: `path:start  kind name [start-end]`.
+    """One (depth, line) per symbol: `path:start  kind name [start-end]`.
 
     Nesting is carried by indentation rather than by repeating the qualified
     name, so a method costs its own name once. The span is what makes the
@@ -597,14 +653,14 @@ def _code_outline(path, symbols):
     out = []
     for s in symbols:
         depth = s["qual"].count(".") if s.get("qual") else 0
-        out.append("%s:%d  %s%s %s [%d-%d]"
-                   % (path, s["start"], "  " * depth, s["kind"], s["name"],
-                      s["start"], s["end"]))
+        out.append((depth, "%s:%d  %s%s %s [%d-%d]"
+                    % (path, s["start"], "  " * depth, s["kind"], s["name"],
+                       s["start"], s["end"])))
     return out
 
 
 def cmd_headings(files, max_tokens):
-    out = []
+    entries = []  # (depth, line); depth 0 is top level
     for path, lines, symbols in files:
         parse = parser_for(path)
         if parse is None:
@@ -612,26 +668,47 @@ def cmd_headings(files, max_tokens):
                 "%s: --headings needs a file xread can parse "
                 "(python, js/ts, markdown, prisma)" % path)
         if parse is parse_markdown:
+            top = min((h["level"] for h in symbols), default=1)
             for h in symbols:
-                out.append("%s:%d  %s %s"
-                           % (path, h["start"], "#" * h["level"], h["name"]))
+                entries.append((h["level"] - top, "%s:%d  %s %s"
+                                % (path, h["start"], "#" * h["level"],
+                                   h["name"])))
         else:
             # "What's in this file?" is the precondition for --symbol: you
             # cannot ask for a symbol whose name you don't know yet. xread
             # already builds this map to serve --symbol, and repomap only
             # takes directories, so this used to be a gap between the two
             # tools that each deflected to the other.
-            out.extend(_code_outline(path, symbols))
-    if max_tokens:
-        budget = max_tokens * 4
-        used = 0
-        for i, line in enumerate(out):
-            used += len(line) + 1
-            if used > budget and i < len(out) - 1:
-                return out[:i] + ["(… %d more outline entries elided for "
-                                  "--max-tokens %d)" % (len(out) - i,
-                                                        max_tokens)]
-    return out
+            entries.extend(_code_outline(path, symbols))
+    out = [line for _, line in entries]
+    if not max_tokens or _tokens_of(out) <= max_tokens:
+        return out
+    # Summarize harder before truncating: hide the deepest entries first, so
+    # the outline still spans the whole file. Cutting the list at the budget
+    # dropped everything past the midpoint of a large file — the one part a
+    # caller could not know to ask for.
+    for keep in range(max(d for d, _ in entries) - 1, -1, -1):
+        kept = [line for d, line in entries if d <= keep]
+        hidden = len(entries) - len(kept)
+        cand = kept + ["(… %d nested entr%s hidden for --max-tokens %d; "
+                       "--symbol NAME shows one in full)"
+                       % (hidden, "y" if hidden == 1 else "ies", max_tokens)]
+        if _tokens_of(cand) <= max_tokens:
+            return cand
+    # Top level alone is still over: keep its head, and say how much went.
+    def elided(n):
+        return ("(… %d more outline entries elided for --max-tokens %d)"
+                % (n, max_tokens))
+
+    top = [line for d, line in entries if d == 0]
+    used, k = 0, 0
+    for line in top:
+        cost = len(line) + 1 + len(elided(len(entries) - k - 1)) + 1
+        if k and (used + cost) // 4 > max_tokens:
+            break
+        used += len(line) + 1
+        k += 1
+    return top[:k] + [elided(len(entries) - k)]
 
 
 def main(argv=None):
