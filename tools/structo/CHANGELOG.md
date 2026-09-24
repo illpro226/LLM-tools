@@ -1,5 +1,18 @@
 # structo Changelog
 
+- 2026-09-24: v0.6.1 - a UTF-8 byte-order mark no longer corrupts data,
+  silently. Every text read decoded as plain utf-8, so the BOM that Excel's
+  "CSV UTF-8" and PowerShell 5's `Out-File` write stayed glued to the first
+  field: a CSV's first header became `﻿id`, and `--select id` matched
+  nothing and printed an empty column with exit 0; a JSONL file's record 0
+  failed to parse and was skipped, so `--path "[0]"` answered with record 1
+  and the summary under-counted records. TOML with a BOM failed as "Invalid
+  statement", and a sniffed-as-TOML file that was not utf-8 escaped as a
+  raw `UnicodeDecodeError` traceback (tomllib decodes strictly itself).
+  All reads now go through `utf-8-sig` (identical on BOM-less files), TOML
+  is decoded before `tomllib.loads`, and a non-utf-8 `.toml` is a clean
+  "not valid toml" error while a sniffed one backs off to the log summary.
+  Found by a suite review. 5 new tests (76 total; STATUS had drifted to 62).
 - 2026-08-22: v0.6.0 - TOML is a supported format. `structo pyproject.toml`
   used to report `format: json (sniffed)` and emit character soup: the
   sniffer saw the leading `[` of a `[table]` header and handed the file to

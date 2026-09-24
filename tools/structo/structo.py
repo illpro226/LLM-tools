@@ -39,7 +39,7 @@ import os
 import re
 import sys
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 
 DEFAULT_SAMPLE = 10
 # ADR-006: schema output is capped by default; --select/--raw are not.
@@ -57,6 +57,14 @@ EXT_FORMATS = {".json": "json", ".jsonl": "jsonl", ".ndjson": "jsonl",
                ".toml": "toml"}
 # Formats whose value model is a JSON-ish tree, so --path/--raw address them.
 TREE_FORMATS = ("json", "jsonl", "yaml", "toml")
+# Every text read decodes as utf-8-sig: identical to utf-8 on a file without
+# a byte-order mark, and it drops the one Windows tools (Excel's "CSV UTF-8",
+# PowerShell 5's Out-File) put in front. Left in, the BOM glued itself to
+# the first CSV header — `--select id` then matched nothing and printed an
+# empty column — and made JSONL record 0 unparsable, so `[0]` answered with
+# record 1. Both silent. (Output streams stay plain utf-8: a BOM there
+# would be written, not dropped.)
+TEXT_ENCODING = "utf-8-sig"
 
 
 class StructoError(Exception):
@@ -255,9 +263,16 @@ def toml_value(path):
         except ImportError:
             raise StructoError("toml support needs Python 3.11+ (tomllib) "
                                "or tomli (pip install tomli)")
+    with open(path, "rb") as fh:
+        data = fh.read()
     try:
-        with open(path, "rb") as fh:
-            return tomllib.load(fh)
+        # tomllib.load decodes strict utf-8 itself: a BOM fails as "Invalid
+        # statement", and non-utf-8 bytes escape as a UnicodeDecodeError
+        # traceback — even from the sniff that only guessed this was toml.
+        return tomllib.loads(data.decode(TEXT_ENCODING))
+    except UnicodeDecodeError as exc:
+        raise StructoError("%s is not valid toml: not utf-8 (%s)"
+                           % (path, exc.reason))
     except tomllib.TOMLDecodeError as exc:
         raise StructoError("%s is not valid toml: %s" % (path, exc))
 
@@ -778,7 +793,7 @@ def detect(path):
     if b"\0" in head:
         raise StructoError("%s looks binary; no structure to report"
                            % path)
-    text = head.decode("utf-8", "replace")
+    text = head.decode(TEXT_ENCODING, "replace")
     stripped = text.lstrip()
     lines = [l for l in text.splitlines() if l.strip()]
     if stripped.startswith("<"):
@@ -953,7 +968,7 @@ def _nth_record(path, index):
     Returns (record, index) or (_MISSING, total records) if out of range."""
     seen = 0
     tail = collections.deque(maxlen=-index) if index < 0 else None
-    with open(path, encoding="utf-8", errors="replace") as fh:
+    with open(path, encoding=TEXT_ENCODING, errors="replace") as fh:
         for line in fh:
             line = line.strip()
             if not line:
@@ -1034,7 +1049,7 @@ def _seek(events, first, segs):
 def iter_records(path, fmt, segs):
     """Yield records one at a time — memory stays O(one record)."""
     if fmt == "jsonl":
-        with open(path, encoding="utf-8", errors="replace") as fh:
+        with open(path, encoding=TEXT_ENCODING, errors="replace") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
@@ -1045,7 +1060,7 @@ def iter_records(path, fmt, segs):
                     continue
                 yield record
     elif fmt in ("json", "yaml"):
-        with open(path, encoding="utf-8", errors="replace") as fh:
+        with open(path, encoding=TEXT_ENCODING, errors="replace") as fh:
             events = iter(json_events(fh, full=True) if fmt == "json"
                           else yaml_events(fh))
             first = next(events, _MISSING)
@@ -1073,7 +1088,7 @@ def iter_records(path, fmt, segs):
                 "tables)" % ("--path" if segs else "the top level"))
         yield from value
     elif fmt in ("csv", "tsv"):
-        with open(path, encoding="utf-8", errors="replace",
+        with open(path, encoding=TEXT_ENCODING, errors="replace",
                   newline="") as fh:
             reader = csv.reader(fh, delimiter="\t" if fmt == "tsv" else ",")
             header = next(reader, None)
@@ -1113,12 +1128,12 @@ def extract_raw(path, fmt, target):
                                % (target[0][1], path, seen))
         value = _walk(record, target[1:])
     elif fmt == "json":
-        with open(path, encoding="utf-8", errors="replace") as fh:
+        with open(path, encoding=TEXT_ENCODING, errors="replace") as fh:
             value = extract_value(json_events(fh, full=True), target)
     elif fmt == "toml":
         value = _walk(toml_value(path), target)
     else:
-        with open(path, encoding="utf-8", errors="replace") as fh:
+        with open(path, encoding=TEXT_ENCODING, errors="replace") as fh:
             value = extract_value(yaml_events(fh), target)
     if value is _MISSING:
         raise StructoError("--path not found in %s" % path)
@@ -1136,10 +1151,10 @@ def summarize(path, fmt, sample, target):
         shape = Shape(sample, target)
         records = None
         if fmt == "json":
-            with open(path, encoding="utf-8", errors="replace") as fh:
+            with open(path, encoding=TEXT_ENCODING, errors="replace") as fh:
                 shape.feed(json_events(fh))
         elif fmt == "yaml":
-            with open(path, encoding="utf-8", errors="replace") as fh:
+            with open(path, encoding=TEXT_ENCODING, errors="replace") as fh:
                 shape.feed(yaml_events(fh))
         elif fmt == "toml":
             shape.feed(value_events(toml_value(path)))
@@ -1153,7 +1168,7 @@ def summarize(path, fmt, sample, target):
         else:
             records = 0
             bad = 0
-            with open(path, encoding="utf-8", errors="replace") as fh:
+            with open(path, encoding=TEXT_ENCODING, errors="replace") as fh:
                 for line in fh:
                     line = line.strip()
                     if not line:
@@ -1189,7 +1204,7 @@ def summarize(path, fmt, sample, target):
                    for kc in (100, 40, 15, 5)]
         return extra, levels
     if fmt in ("csv", "tsv"):
-        with open(path, encoding="utf-8", errors="replace",
+        with open(path, encoding=TEXT_ENCODING, errors="replace",
                   newline="") as fh:
             model = summarize_csv(fh, "\t" if fmt == "tsv" else ",")
         return "", [lambda lv=lv: render_csv(model, lv)
@@ -1197,7 +1212,7 @@ def summarize(path, fmt, sample, target):
     if fmt == "xml":
         model = summarize_xml(path)
         return "", [lambda lv=lv: render_xml(model, lv) for lv in (0, 1, 2)]
-    with open(path, encoding="utf-8", errors="replace") as fh:
+    with open(path, encoding=TEXT_ENCODING, errors="replace") as fh:
         model = summarize_log(fh, path)
     return "", [lambda lv=lv: render_log(model, lv) for lv in (0, 1, 2)]
 

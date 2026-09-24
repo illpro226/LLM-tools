@@ -1,6 +1,6 @@
 # structo Status
 
-Implemented (v0.6.0) and passing tests.
+Implemented (v0.6.1) and passing tests.
 
 - `structo.py` — single-file CLI printing the schema and shape of a data
   file instead of its content. Formats: JSON, JSONL, YAML (via PyYAML —
@@ -58,7 +58,10 @@ Implemented (v0.6.0) and passing tests.
 - The ladder ends in sibling-key caps (100/40/15/5 with `… (+N more
   keys)`), so a very wide record still fits a budget — depth levels alone
   bottomed out at one line per top-level key (ADR-006).
-- Tests: `tests/test_structo.py` (62 tests) over one committed fixture
+- Text reads decode as `utf-8-sig`, so a leading byte-order mark (Excel
+  "CSV UTF-8", PowerShell 5) is dropped instead of corrupting the first
+  CSV header or JSONL record; non-utf-8 TOML is an error, not a traceback.
+- Tests: `tests/test_structo.py` (76 tests) over one committed fixture
   per format plus the generated large files (slow-marked).
 
 Not done / later: XML has no `--path` zoom and no `--select`; no

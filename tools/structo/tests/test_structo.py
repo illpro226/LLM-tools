@@ -687,3 +687,56 @@ def test_schema_output_is_capped_by_default(tmp_path, capsys):
     out = ok([str(src)], capsys)
     est = len(out.rstrip("\n").encode("utf-8")) // 4 + 1
     assert est <= structo.DEFAULT_MAX_TOKENS
+
+
+# ------------------------------------------------ byte-order marks (v0.6.1)
+# Excel's "CSV UTF-8" and PowerShell 5's Out-File write a UTF-8 BOM. Read as
+# plain utf-8 it stayed glued to the first field, and both failures were
+# silent: wrong data, exit 0.
+
+BOM = b"\xef\xbb\xbf"
+
+
+def test_bom_csv_select_finds_the_first_column(tmp_path, capsys):
+    p = tmp_path / "people.csv"
+    p.write_bytes(BOM + b"id,name\n1,a\n2,b\n")
+    out = ok([str(p), "--select", "id,name"], capsys)
+    assert out.splitlines() == ["id\tname", "1\ta", "2\tb"]
+    summary = ok([str(p)], capsys)
+    assert "﻿" not in summary
+
+
+def test_bom_jsonl_record_zero_is_the_first_record(tmp_path, capsys):
+    p = tmp_path / "events.jsonl"
+    p.write_bytes(BOM + b'{"id": 1}\n{"id": 2}\n')
+    assert ok([str(p), "--raw", "--path", "[0].id"], capsys).strip() == "1"
+    summary = ok([str(p)], capsys)
+    assert "records 2" in summary and "unparsable" not in summary
+    assert ok([str(p), "--select", "id"], capsys).splitlines() == [
+        "id", "1", "2"]
+
+
+def test_bom_toml_parses(tmp_path, capsys):
+    p = tmp_path / "cfg.toml"
+    p.write_bytes(BOM + b'[tool]\nname = "x"\n')
+    out = ok([str(p), "--raw", "--path", "tool.name"], capsys)
+    assert out.strip() == "x"
+
+
+def test_bom_does_not_defeat_sniffing(tmp_path, capsys):
+    p = tmp_path / "noext"
+    p.write_bytes(BOM + b'{"a": {"b": 1}}')
+    assert "format: json (sniffed)" in ok([str(p)], capsys)
+
+
+def test_non_utf8_toml_is_an_error_not_a_traceback(tmp_path, capsys):
+    """tomllib decodes strict utf-8 itself; its UnicodeDecodeError escaped
+    both the explicit .toml path and the sniff that was only guessing."""
+    explicit = tmp_path / "latin1.toml"
+    explicit.write_bytes(b'name = "caf\xe9"\n')
+    code, out, err = run([str(explicit)], capsys)
+    assert code == 2 and out == ""
+    assert "not valid toml" in err and "utf-8" in err
+    sniffed = tmp_path / "settings.conf"
+    sniffed.write_bytes(b'name = "caf\xe9"\nport = 80\n')
+    assert "format: log (sniffed)" in ok([str(sniffed)], capsys)
