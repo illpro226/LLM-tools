@@ -27,7 +27,7 @@ import re
 import subprocess
 import sys
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 # ADR-006: the token cap is on by default. `hunks` on a large working diff
 # is exactly the call that floods a context window, and it is never the
@@ -73,10 +73,23 @@ def _git_env():
     return env
 
 
+# Config that would reshape what this tool parses, pinned for every call:
+# porcelain v2 status honours status.relativePaths (paths relative to the
+# cwd, while diff --numstat stays root-relative — so every count read +0 -0
+# from a subdirectory), and diff.relative restricts and re-roots diff paths.
+_PINNED_CONFIG = ("-c", "color.ui=false", "-c", "core.quotepath=false",
+                  "-c", "status.relativePaths=false",
+                  "-c", "diff.relative=false")
+# For diffs whose text is parsed: fixed a/ b/ prefixes whatever
+# diff.noprefix / diff.mnemonicPrefix / diff.srcPrefix say (noprefix made
+# `hunks` chop two characters off every path), and never an external driver.
+_PATCH_FLAGS = ("--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/")
+
+
 def _git(*args, ok_codes=(0,)):
     """Run one read-only git command; every call is a reproducible argv."""
-    argv = ["git", "--no-optional-locks", "--no-pager",
-            "-c", "color.ui=false", "-c", "core.quotepath=false", *args]
+    argv = ["git", "--no-optional-locks", "--no-pager", *_PINNED_CONFIG,
+            *args]
     try:
         proc = subprocess.run(argv, capture_output=True, text=True,
                               encoding="utf-8", errors="replace",
@@ -202,13 +215,25 @@ def _section(name, entries, stats, show_files):
     return lines
 
 
+def _toplevel():
+    return _git("rev-parse", "--show-toplevel").strip()
+
+
+def _root_relative(path):
+    """A cwd-relative path as the repo-root-relative form status prints."""
+    prefix = _git("rev-parse", "--show-prefix").strip()
+    return os.path.normpath(prefix + path).replace("\\", "/")
+
+
 def view_default(budget):
     st = gather_status()
     staged_stats = _numstat("--cached")
     unstaged_stats = _numstat()
     untracked_stats = {}
+    top = _toplevel() if st["untracked"] else ""
     for e in st["untracked"]:
-        n, binary = _count_lines(e["path"].replace("/", os.sep))
+        # status paths are root-relative; the cwd may be a subdirectory
+        n, binary = _count_lines(os.path.join(top, e["path"]))
         untracked_stats[e["path"]] = (n, 0, binary)
     commits = gather_commits(DEFAULT_COMMITS)
 
@@ -291,13 +316,43 @@ def _hunk_counts(f):
 def view_hunks(paths, budget):
     if not _head_exists():
         raise GitbriefError("no commits yet; nothing to diff against")
-    args = ["diff", "HEAD", "-U1", "--no-renames"]
+    args = ["diff", "HEAD", "-U1", "--no-renames", *_PATCH_FLAGS]
     if paths:
         args += ["--", *paths]
     files = parse_diff(_git(*args))
     if not files:
         return ["no changes" + (" in %s" % ", ".join(paths)
                                 if paths else "")]
+
+    def floor():
+        # One line per file is still O(files): a vendoring or line-ending
+        # commit touching thousands ignored the budget at the last rung.
+        # Keep the head of the list and total the rest.
+        counts = [_hunk_counts(f) for f in files]
+        rows = ["%s (%d hunk%s, +%d -%d)"
+                % (f["path"], len(f["hunks"]),
+                   "" if len(f["hunks"]) == 1 else "s", p, m)
+                for f, (p, m) in zip(files, counts)]
+        suffix = [(0, 0)] * (len(files) + 1)   # (+, -) of files[k:]
+        for k in range(len(files) - 1, -1, -1):
+            suffix[k] = (suffix[k + 1][0] + counts[k][0],
+                         suffix[k + 1][1] + counts[k][1])
+
+        def rest(k):
+            n = len(files) - k
+            return ("(… %d more file%s, +%d -%d, for --max-tokens %d)"
+                    % (n, "" if n == 1 else "s", suffix[k][0], suffix[k][1],
+                       budget))
+
+        def size(line):             # bytes, as _est counts them
+            return len(line.encode("utf-8", "replace")) + 1
+
+        used = 0
+        for k, row in enumerate(rows):
+            if k and (used + size(row) + size(rest(k + 1))) // 4 > budget:
+                return rows[:k] + [rest(k)]
+            used += size(row)
+        return rows + ["(reduced for --max-tokens: per-file counts only)"]
 
     def render(level):
         # level 0: full 1-context hunks; 1: changed lines only;
@@ -327,16 +382,16 @@ def view_hunks(paths, budget):
         return lines
 
     return fit([lambda: render(0), lambda: render(1),
-                lambda: render(2), lambda: render(3)], budget)
+                lambda: render(2), lambda: render(3), floor], budget)
 
 
 def view_show(path, budget):
     if not _head_exists():
         raise GitbriefError("no commits yet; nothing to diff against")
-    out = _git("diff", "HEAD", "--no-renames", "--", path)
+    out = _git("diff", "HEAD", "--no-renames", *_PATCH_FLAGS, "--", path)
     if not out:
         st = gather_status()
-        if any(e["path"] == path for e in st["untracked"]):
+        if any(e["path"] == _root_relative(path) for e in st["untracked"]):
             raise GitbriefError("%s is untracked; gitbrief show diffs "
                                 "tracked files (read it with xread)" % path)
         return ["no changes in %s" % path]
@@ -373,13 +428,29 @@ def view_log(n, grep, author, budget):
 def _py_symbols(source):
     import ast
     try:
-        tree = ast.parse(source)
+        # A BOM is U+FEFF to ast.parse — a syntax error, which read as "no
+        # symbols" and hid every change in the file.
+        tree = ast.parse(source[1:] if source.startswith("﻿")
+                         else source)
     except SyntaxError:
         return []
+    defs = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+    blocks = tuple(getattr(ast, n) for n in ("If", "Try", "TryStar",
+                                              "ExceptHandler", "With",
+                                              "AsyncWith")
+                   if hasattr(ast, n))
+
+    def top_level(node):
+        # `if sys.platform ...: def f()` / `except ImportError: def f()`
+        # still define module-level names.
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, defs):
+                yield child
+            elif isinstance(child, blocks):
+                yield from top_level(child)
+
     return [{"name": n.name, "start": n.lineno, "end": n.end_lineno}
-            for n in tree.body
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef,
-                              ast.ClassDef))]
+            for n in top_level(tree)]
 
 
 _TS_DECL = re.compile(
@@ -426,6 +497,19 @@ def _strip_ts_noise(line, state):
     return "".join(out)
 
 
+def _template_close(line):
+    """Index of the backtick closing a template literal, or -1."""
+    i = 0
+    while i < len(line):
+        if line[i] == "\\":
+            i += 2
+            continue
+        if line[i] == "`":
+            return i
+        i += 1
+    return -1
+
+
 def _ts_symbols(source):
     syms = []
     stack = []  # open top-level declarations: (symbol, open_depth)
@@ -434,9 +518,11 @@ def _ts_symbols(source):
     lines = source.splitlines()
     for i, raw in enumerate(lines, 1):
         if state["template"]:
-            if "`" in raw:
-                state["template"] = False
-            continue
+            close = _template_close(raw)
+            if close == -1:
+                continue
+            state["template"] = False
+            raw = raw[close + 1:]   # code after the backtick still counts
         code = _strip_ts_noise(raw, state).strip()
         if depth == 0 and code:
             m = _TS_DECL.match(code)
@@ -467,19 +553,86 @@ def _blob(rev, path):
     return out  # empty string when the path does not exist at rev
 
 
+def _blobs(specs):
+    """{"REV:path": text} through one `git cat-file --batch` rather than a
+    `git show` per blob — `pr` spent ~50 ms of process start per file side,
+    7 s for a 42-file branch. A spec git cannot resolve maps to "" (the path
+    does not exist at that rev); a spec that cannot travel on one stdin
+    line is left out, and the caller falls back to _blob for it."""
+    specs = [s for s in dict.fromkeys(specs) if "\n" not in s
+             and "\r" not in s]
+    if not specs:
+        return {}
+    argv = ["git", "--no-optional-locks", *_PINNED_CONFIG, "cat-file",
+            "--batch"]
+    try:
+        proc = subprocess.run(argv, input=("\n".join(specs) + "\n")
+                              .encode("utf-8"), capture_output=True,
+                              env=_git_env())
+    except FileNotFoundError:
+        raise GitbriefError("git binary not found on PATH")
+    if proc.returncode != 0:
+        return {}                       # every spec falls back to _blob
+    out, pos, texts = proc.stdout, 0, {}
+    for spec in specs:
+        nl = out.find(b"\n", pos)
+        if nl == -1:
+            break
+        header = out[pos:nl].split(b" ")
+        pos = nl + 1
+        if len(header) == 3 and header[2].isdigit():   # "<sha> <type> <n>"
+            size = int(header[2])
+            body = out[pos:pos + size]
+            pos += size + 1                               # content + LF
+            texts[spec] = (body.decode("utf-8", "replace")
+                           if header[1] == b"blob" else "")
+        else:                                  # "<spec> missing" and kin
+            texts[spec] = ""
+    return texts
+
+
+_HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", re.M)
+
+
+def _add_hunk(m, before, after):
+    a, b = int(m.group(1)), int(m.group(2) or "1")
+    c, d = int(m.group(3)), int(m.group(4) or "1")
+    if b:                # a pure addition touches no before lines
+        before.append((a, a + b - 1))
+    if d:                # a pure deletion touches no after lines
+        after.append((c, c + d - 1))
+
+
 def _changed_ranges(base, path):
     """(before_ranges, after_ranges) from a -U0 diff, inclusive spans."""
-    out = _git("diff", "-U0", "--no-renames", base, "HEAD", "--", path)
+    out = _git("diff", "-U0", "--no-renames", "--no-ext-diff", base, "HEAD",
+               "--", path)
     before, after = [], []
-    for m in re.finditer(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@",
-                         out, re.M):
-        a, b = int(m.group(1)), int(m.group(2) or "1")
-        c, d = int(m.group(3)), int(m.group(4) or "1")
-        if b:                # a pure addition touches no before lines
-            before.append((a, a + b - 1))
-        if d:                # a pure deletion touches no after lines
-            after.append((c, c + d - 1))
+    for m in _HUNK_RE.finditer(out):
+        _add_hunk(m, before, after)
     return before, after
+
+
+def _changed_ranges_many(base, paths, chunk=100):
+    """{path: (before_ranges, after_ranges)} from one -U0 diff per `chunk`
+    paths (chunked to stay under the Windows command-line limit). A path
+    whose header git quoted is absent, and the caller asks for it alone."""
+    ranges = {}
+    for i in range(0, len(paths), chunk):
+        text = _git("diff", "-U0", "--no-renames", *_PATCH_FLAGS, base,
+                    "HEAD", "--", *paths[i:i + chunk])
+        cur, in_header = None, False
+        for line in text.splitlines():
+            if line.startswith("diff --git "):
+                cur, in_header = None, True
+            elif in_header and line.startswith(("--- a/", "+++ b/")):
+                cur = ranges.setdefault(line[6:].split("\t")[0], ([], []))
+            elif line.startswith("@@"):
+                in_header = False
+                m = _HUNK_RE.match(line)
+                if m and cur is not None:
+                    _add_hunk(m, *cur)
+    return ranges
 
 
 def _hits(spans, ranges):
@@ -489,21 +642,28 @@ def _hits(spans, ranges):
 
 def changed_symbols(base, paths):
     """[(path, added, modified, removed)], [unanalyzed paths]."""
-    results, skipped = [], []
+    results, skipped, wanted = [], [], []
     for path in paths:
-        probe = _symbols_for(path, "")
-        if probe is None:
-            skipped.append(path)
-            continue
-        before_src = _blob(base, path)
-        after_src = _blob("HEAD", path)
+        (wanted if _symbols_for(path, "") is not None
+         else skipped).append(path)
+    blobs = _blobs(["%s:%s" % (rev, p) for p in wanted
+                    for rev in (base, "HEAD")])
+    ranges = _changed_ranges_many(base, wanted)
+    for path in wanted:
+        before_src = blobs.get("%s:%s" % (base, path))
+        if before_src is None:
+            before_src = _blob(base, path)
+        after_src = blobs.get("HEAD:%s" % path)
+        if after_src is None:
+            after_src = _blob("HEAD", path)
         before = _symbols_for(path, before_src) or []
         after = _symbols_for(path, after_src) or []
         before_names = {s["name"] for s in before}
         after_names = {s["name"] for s in after}
         added = sorted(after_names - before_names)
         removed = sorted(before_names - after_names)
-        b_ranges, a_ranges = _changed_ranges(base, path)
+        b_ranges, a_ranges = (ranges.get(path)
+                              or _changed_ranges(base, path))
         touched = _hits(after, a_ranges) | _hits(before, b_ranges)
         modified = sorted(touched & before_names & after_names)
         if added or removed or modified:

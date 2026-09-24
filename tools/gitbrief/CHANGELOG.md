@@ -1,5 +1,30 @@
 # gitbrief Changelog
 
+- 2026-09-24: v0.3.0 — fixes from a suite review, each pinned by a test
+  that fails on v0.2.1.
+  **Every count read `+0 -0` from a subdirectory.** Porcelain v2 status
+  honours `status.relativePaths` and printed cwd-relative paths, while
+  `diff --numstat` is always root-relative, so no stats lookup matched. The
+  config is now pinned off: paths are root-relative everywhere (as `hunks`
+  and `pr` already were) and the counts are right from any directory.
+  Untracked line counts resolve against the toplevel, and `show` still
+  recognises an untracked file named relative to the cwd.
+  **User diff config reshaped parsed diffs.** With `diff.noprefix=true`,
+  `hunks` stripped two characters off every path (`ols/tokq/README.md`);
+  an external diff driver replaced the patch entirely. Parsed diffs now
+  pin `--src-prefix=a/ --dst-prefix=b/ --no-ext-diff`, and
+  `diff.relative` is pinned off.
+  **The `hunks` floor was O(files).** One count line per file ignored the
+  budget on a wide diff; the last rung now keeps the head of the list and
+  totals the rest (`(… N more files, +P -M, for --max-tokens N)`).
+  **`pr` was ~50 ms of process start per file side.** Blobs now come
+  through one `git cat-file --batch` and ranges through `-U0` diffs 100
+  paths at a time (anything the batch cannot key falls back to the
+  per-file call): 6.7 s → 0.7 s on a 42-file branch, output byte-identical.
+  Its Python scan also sees defs under module-level `if`/`try`/`with`, a
+  BOM no longer turns a file's symbols into none, and the JS/TS scan
+  counts code after a multi-line template's closing backtick.
+  5 new tests (35 total).
 - 2026-07-31: v0.2.1 — git repository discovery is bounded by
   `GIT_CEILING_DIRECTORIES`, defaulted to `$HOME` (ADR-007). Without it, a
   run outside any project walked up to a home directory that is itself a

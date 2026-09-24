@@ -338,3 +338,110 @@ def test_repo_below_the_ceiling_is_still_found(repo, monkeypatch):
     monkeypatch.chdir(sub)
     root = gitbrief._git("rev-parse", "--show-toplevel").strip()
     assert os.path.realpath(root) == os.path.realpath(str(repo))
+
+
+# ------------------------------------------------ v0.3.0 review fixes
+
+def test_default_counts_are_right_from_a_subdirectory(tmp_path, monkeypatch,
+                                                     capsys):
+    """Porcelain v2 status honours status.relativePaths (cwd-relative),
+    diff --numstat does not (root-relative), so from a subdirectory every
+    lookup missed and every count read +0 -0."""
+    work = tmp_path / "sub"
+    work.mkdir()
+    g(work, "init", "-b", "main")
+    from conftest import commit_file, write
+    commit_file(work, "pkg/mod.py", "a = 1\n", "init")
+    commit_file(work, "top.txt", "t\n", "top")
+    write(work, "pkg/mod.py", "a = 1\nb = 2\n")        # unstaged +1 -0
+    write(work, "top.txt", "t\nu\nv\n")                 # unstaged +2 -0
+    write(work, "pkg/new.txt", "n1\nn2\n")              # untracked +2
+    monkeypatch.chdir(work / "pkg")
+    out = ok([], capsys)
+    lines = [" ".join(l.split()) for l in out.splitlines()]
+    assert "unstaged (2 files, +3 -0):" in out
+    assert "M pkg/mod.py +1 -0" in lines
+    assert "M top.txt +2 -0" in lines
+    assert "? pkg/new.txt +2 -0" in lines
+    code, _, err = run(["show", "new.txt"], capsys)    # cwd-relative name
+    assert code == 2 and "untracked" in err
+
+
+def test_user_diff_config_does_not_reshape_parsed_diffs(repo, monkeypatch,
+                                                        capsys):
+    """diff.noprefix chopped two characters off every `hunks` path, and an
+    external diff driver replaced the patch text entirely."""
+    monkeypatch.chdir(repo)
+    want = ok(["hunks"], capsys)
+    g(repo, "config", "diff.noprefix", "true")
+    assert ok(["hunks"], capsys) == want
+    g(repo, "config", "diff.noprefix", "false")
+    g(repo, "config", "diff.mnemonicPrefix", "true")
+    assert ok(["hunks"], capsys) == want
+    g(repo, "config", "diff.external", "echo EXTERNAL")
+    assert ok(["hunks"], capsys) == want
+    assert "EXTERNAL" not in ok(["show", "b.txt"], capsys)
+
+
+def test_hunks_floor_is_bounded_for_a_wide_diff(tmp_path, monkeypatch,
+                                                capsys):
+    """Per-file counts are O(files); the last rung now keeps the head of
+    the list and totals the rest, so a huge diff still fits the budget."""
+    work = tmp_path / "wide"
+    work.mkdir()
+    g(work, "init", "-b", "main")
+    from conftest import write
+    for i in range(300):
+        write(work, "f%03d.txt" % i, "x\n")
+    g(work, "add", ".")
+    g(work, "commit", "-m", "many")
+    for i in range(300):
+        write(work, "f%03d.txt" % i, "y\n")
+    monkeypatch.chdir(work)
+    out = ok(["hunks", "--max-tokens", "150"], capsys)
+    lines = out.splitlines()
+    assert gitbrief._est(lines) <= 150
+    assert lines[0].startswith("f000.txt (1 hunk, +1 -1)")
+    shown = len(lines) - 1
+    assert lines[-1] == ("(… %d more files, +%d -%d, for --max-tokens 150)"
+                         % (300 - shown, 300 - shown, 300 - shown))
+
+
+PY_COND_V1 = ("import sys\n\nif sys.platform == 'win32':\n"
+              "    def helper():\n        return 1\n")
+PY_COND_V2 = PY_COND_V1.replace("return 1", "return 2")
+
+
+def test_pr_sees_conditional_and_bom_python_symbols(tmp_path, monkeypatch,
+                                                     capsys):
+    work = tmp_path / "prc"
+    work.mkdir()
+    g(work, "init", "-b", "main")
+    from conftest import commit_file
+    commit_file(work, "cond.py", PY_COND_V1, "base")
+    commit_file(work, "bom.py", "\ufeffdef f():\n    return 1\n", "bom base")
+    g(work, "switch", "-c", "feature")
+    commit_file(work, "cond.py", PY_COND_V2, "change helper")
+    commit_file(work, "bom.py", "\ufeffdef f():\n    return 2\n", "bom edit")
+    monkeypatch.chdir(work)
+    out = ok(["pr", "main"], capsys)
+    lines = [" ".join(l.split()) for l in out.splitlines()]
+    assert "cond.py ~helper" in lines
+    assert "bom.py ~f" in lines
+
+
+def test_pr_batched_reads_match_per_file_reads(pr_repo, monkeypatch):
+    """The cat-file / chunked-diff batch must answer exactly what one
+    `git show` and one `git diff` per file did."""
+    monkeypatch.chdir(pr_repo)
+    base = g(pr_repo, "merge-base", "main", "HEAD").strip()
+    paths = ["a.py", "web.ts", "data.csv", "no-such-file.py"]
+    specs = ["%s:%s" % (rev, p) for p in paths for rev in (base, "HEAD")]
+    blobs = gitbrief._blobs(specs)
+    for spec in specs:
+        rev, path = spec.split(":", 1)
+        assert blobs[spec] == gitbrief._blob(rev, path).replace("\r\n", "\n")
+    ranges = gitbrief._changed_ranges_many(base, paths, chunk=2)
+    for path in ("a.py", "web.ts", "data.csv"):
+        assert ranges[path] == gitbrief._changed_ranges(base, path)
+    assert "no-such-file.py" not in ranges
