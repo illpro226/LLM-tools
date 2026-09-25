@@ -272,6 +272,41 @@ def main():
                 fails += 1
         print("ok   mask_literals preserves offsets")
 
+    # Grep nudge: fires once per session, only on a content-mode result big
+    # enough for sgrep's shape to matter. SAVINGS_ROOT is cleared so the
+    # nudge's log line doesn't land in the real .savings/.
+    if hasattr(hook, "nudge_grep"):
+        import contextlib
+        import io
+        import uuid
+        hook.SAVINGS_ROOT = None
+        sid = f"test-{uuid.uuid4().hex}"
+
+        def nudged(inp, resp):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                hook.nudge_grep({"session_id": sid, "tool_input": inp,
+                                 "tool_response": resp})
+            return bool(buf.getvalue())
+
+        content = {"output_mode": "content", "path": FIXTURE}
+        for label, inp, resp, want in (
+            ("grep nudge: files_with_matches never nudges",
+             {"output_mode": "files_with_matches"}, {"numLines": 50}, False),
+            ("grep nudge: small result stays quiet", content, {"numLines": 3}, False),
+            ("grep nudge: text response counted when numLines absent",
+             content, {"content": "a\nb\n"}, False),
+            ("grep nudge: big carve-out result nudges", content, {"numLines": 12}, True),
+            ("grep nudge: only once per session", content, {"numLines": 40}, False),
+        ):
+            got = nudged(inp, resp)
+            ok = got == want
+            fails += not ok
+            print(f"{'ok  ' if ok else 'FAIL'} {label}")
+        marker = os.path.join(tempfile.gettempdir(), f"llm-tools-grep-nudge-{sid}.flag")
+        if os.path.exists(marker):
+            os.unlink(marker)
+
     if args.baseline:
         base = load("guard_baseline", args.baseline)
         print(f"\n--- differential vs {args.baseline} ---")

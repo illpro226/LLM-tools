@@ -17,8 +17,8 @@ CI never depends on match behavior drift.
 - **Parsing** — canned JSON streams parse to the expected hit lists,
   incrementally (no full-buffer requirement).
 - **Grouping and dedupe** — per-file counts correct; a file with >5 matches
-  shows exactly 3 distinct representatives (normalized-content dedupe) plus a
-  correct `(+N more similar)` note.
+  shows one representative per normalized-content cluster plus a correct
+  `(+N more similar)` note; distinct lines are never labelled "similar".
 - **Ranking** — density × path-class ordering: src before tests before
   generated; config override changes class weights; ties break by path sort.
 - **Cheap modes** — `--files-only` and `--counts-only` formats.

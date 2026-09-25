@@ -1,5 +1,16 @@
 # sgrep Changelog
 
+- 2026-09-24: v0.6.0 — collapsing no longer hides distinct lines.
+  A file with more than 5 matches showed at most 3 cluster representatives
+  under a "(+N more similar)" footer, even when the rest were different
+  lines and the output was far under budget: six distinct JSON keys showed
+  three, hiding the one being searched for, and 30 different `def` lines
+  showed two. Every cluster now gets a representative; size is left to the
+  --max-tokens ladder, which still caps to 3/2/1 per file when the full set
+  doesn't fit, so over-budget searches render as before. When that cap
+  hides distinct lines the footer says `(+N more, D distinct)` instead of
+  "similar", and one closing line points at --max-tokens / --no-collapse.
+  (docs/known-issues/archive/sgrep-collapse-hides-distinct-json-keys.md)
 - 2026-09-24: v0.5.0 — four fixes found by a suite review, each with a
   regression test that fails on v0.4.1.
   **The budget ladder was quadratic in matching files.** The file-count rung

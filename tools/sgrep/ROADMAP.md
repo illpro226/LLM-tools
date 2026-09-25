@@ -8,7 +8,7 @@
 ## M2 — Grouping and dedupe
 
 - Per-file grouping with counts; normalized-content dedupe;
-  3-representatives + `(+N more similar)` behavior.
+  one-representative-per-cluster + `(+N more similar)` behavior.
 
 ## M3 — Ranking and cheap modes
 

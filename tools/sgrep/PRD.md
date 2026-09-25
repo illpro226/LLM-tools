@@ -15,7 +15,7 @@ A raw grep over a real codebase returns thousands of lines, most of them near-du
 
 - Shell out to `rg --json` and post-process the results; never reimplement the matcher.
 - Group matches by file with a per-file match count.
-- When a file has more than 5 matches, show the 3 most distinct ones (deduplicated by normalized line content) plus a `(+12 more similar)` note.
+- When a file has more than 5 matches, show one representative per distinct normalized form (deduplicated by normalized line content) plus a `(+12 more similar)` note; the token budget, not a fixed count, limits how many are shown (ADR-002, amended 2026-09-24).
 - Rank files by match density and path heuristics — prefer `src` over tests over generated files; heuristics configurable.
 
 ### CLI surface
@@ -39,7 +39,7 @@ A raw grep over a real codebase returns thousands of lines, most of them near-du
 ## Acceptance criteria
 
 - Against a fixture tree, matches are grouped by file with counts, and files rank by density and path preference (src before tests before generated).
-- A file with >5 matches shows exactly 3 distinct representatives plus a correct `(+N more similar)` note.
+- A file with >5 matches shows one representative per distinct normalized form plus a correct `(+N more similar)` note; distinct lines hidden by the budget are counted as distinct, never as "similar".
 - Near-identical lines are deduplicated by normalized content.
 - `--max-tokens` reduces context lines first, then matches per file, then files, verified by tests at descending budgets.
 - `--files-only` and `--counts-only` emit their cheaper formats.

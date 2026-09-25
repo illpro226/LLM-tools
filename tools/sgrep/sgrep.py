@@ -28,7 +28,7 @@ import subprocess
 import sys
 import threading
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 SHOW_ALL_LIMIT = 5    # files with <= this many matching lines show them all
 REPRESENTATIVES = 3   # distinct lines shown when a file exceeds the limit
@@ -204,26 +204,42 @@ def select_matches(entry, cap, no_collapse=False):
     """Pick the shown matches for one file.
 
     Files at or under SHOW_ALL_LIMIT show every match; above it, one
-    representative per normalized-content cluster (largest clusters first),
-    REPRESENTATIVES at most. `cap` tightens either path under --max-tokens.
+    representative per normalized-content cluster (largest clusters first).
+    Every cluster gets one: clustering drops near-duplicates, and size is
+    --max-tokens' job, whose ladder sets `cap` (REPRESENTATIVES, then fewer)
+    when the full set doesn't fit. A fixed cap of 3 here hid distinct lines
+    - different JSON keys, different `def`s - from outputs far under budget
+    (docs/known-issues/archive/sgrep-collapse-hides-distinct-json-keys.md).
+    `cap` tightens either path under --max-tokens.
     `no_collapse` skips the clustering step: every match is a candidate, in
     line order, for the times the task is "edit each one of these" and a
     representative is the wrong answer.
     Returns (shown [(line, text)] in line order, hidden count).
     """
     count = entry["count"]
-    limit = count if (no_collapse or count <= SHOW_ALL_LIMIT) else REPRESENTATIVES
-    if cap is not None:
-        limit = min(limit, cap)
+    limit = count if cap is None else min(count, cap)
     if no_collapse or count <= SHOW_ALL_LIMIT:
         shown = entry["matches"][:limit]
     else:
-        clusters = {}
-        for line, text in entry["matches"]:
-            clusters.setdefault(normalize(text), []).append((line, text))
-        ordered = sorted(clusters.values(), key=lambda c: (-len(c), c[0][0]))
+        ordered = sorted(_clusters(entry).values(),
+                         key=lambda c: (-len(c), c[0][0]))
         shown = sorted(c[0] for c in ordered[:limit])
     return shown, count - len(shown)
+
+
+def _clusters(entry):
+    clusters = {}
+    for line, text in entry["matches"]:
+        clusters.setdefault(normalize(text), []).append((line, text))
+    return clusters
+
+
+def unshown_clusters(entry, shown):
+    """Distinct clusters with no representative shown. Non-zero only when
+    --max-tokens capped the file, and then the hidden lines are not all
+    "similar" to what's on screen, so the footer must not say they are."""
+    seen = {normalize(text) for _, text in shown}
+    return sum(1 for key in _clusters(entry) if key not in seen)
 
 
 def rank(files, weights, extra):
@@ -260,6 +276,7 @@ def render(ranked, files, ctx_radius, cap, nfiles, counts_only, files_only,
         return lines
 
     out = []
+    any_distinct = False
     for path in kept:
         entry = files[path]
         if out:
@@ -287,11 +304,20 @@ def render(ranked, files, ctx_radius, cap, nfiles, counts_only, files_only,
                 # every claim line is still followable with xread.
                 out.append("%*d- %s" % (lineno_width, line, ctx[line]))
         if hidden:
-            out.append("(+%d more)" % hidden if no_collapse
-                       else "(+%d more similar)" % hidden)
+            distinct = 0 if no_collapse else unshown_clusters(entry, shown)
+            if no_collapse:
+                out.append("(+%d more)" % hidden)
+            elif distinct:
+                out.append("(+%d more, %d distinct)" % (hidden, distinct))
+                any_distinct = True
+            else:
+                out.append("(+%d more similar)" % hidden)
     if len(ranked) > len(kept):
         out.append("")
         out += _dropped_files_note(ranked, kept, files)
+    if any_distinct:
+        out.append("(distinct lines hidden to fit the budget: raise "
+                   "--max-tokens or use --no-collapse)")
     return out
 
 

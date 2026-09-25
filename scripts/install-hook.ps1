@@ -43,7 +43,7 @@ $snippet = @"
     ],
     "PostToolUse": [
       {
-        "matcher": "Read|Bash|PowerShell",
+        "matcher": "Read|Grep|Bash|PowerShell",
         "hooks": [
           { "type": "command",
             "command": "python \"$($Dest -replace '\\','/')\"",

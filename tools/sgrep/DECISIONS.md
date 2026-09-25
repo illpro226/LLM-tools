@@ -20,6 +20,15 @@ strip numbers/ids); show the 3 most distinct when count > 5, plus a
 Consequences: some genuinely distinct hits may cluster; the remainder count
 keeps the information loss visible and recoverable via raw `rg`.
 
+Amended 2026-09-24 (v0.6.0): the fixed "3 most distinct" cap is gone; every
+cluster gets a representative and ADR-003's budget ladder does the capping.
+The cap wasn't deduplication: normalization had kept six different JSON keys
+as six clusters, but sgrep still showed three and called the rest "similar",
+hiding the one key being searched for in a 6-line result. When the budget
+does cap distinct clusters away, the footer says `(+N more, D distinct)`.
+Over-budget output is unchanged, since the ladder's first per-file cap is
+still 3.
+
 ## ADR-003: Fixed reduction order for --max-tokens — Accepted (2026-07-07)
 
 Context: budget cuts must be predictable for agents.

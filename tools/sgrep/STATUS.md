@@ -10,8 +10,8 @@ Implemented (v0.5.0) and passing tests.
   `--rg`, or `SGREP_RG`. Missing binary is a clear install-hint error
   (exit 2); no matches exits 1 like grep.
 - Dedupe (ADR-002): matches cluster by normalized text (whitespace
-  collapsed, digit runs → 0); >5 matching lines shows 3 representatives
-  plus `(+N more similar)`. `--no-collapse` turns clustering off for
+  collapsed, digit runs → 0); >5 matching lines shows one representative
+  per cluster plus `(+N more similar)` (v0.6.0; was a fixed 3). `--no-collapse` turns clustering off for
   exhaustive "edit each of these" work; the token budget still applies and
   announces itself when it caps.
 - Ranking: match count × path-class weight (src 1.0 / tests 0.5 /

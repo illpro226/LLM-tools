@@ -57,9 +57,11 @@ of its own — repeating the path on each one was most of sgrep's per-line
 overhead against a raw `rg` dump.
 
 A file with more than 5 matching lines shows one representative per
-distinct normalized form (whitespace collapsed, digit runs equalized), 3 at
-most, plus a `(+N more similar)` remainder — the loss is visible and
-recoverable via raw `rg`.
+distinct normalized form (whitespace collapsed, digit runs equalized), plus
+a `(+N more similar)` remainder — only near-duplicates are dropped. When the
+`--max-tokens` budget has to cap a file below its distinct forms, the footer
+reads `(+N more, D distinct)` and one closing line points at `--max-tokens` /
+`--no-collapse`.
 
 ## Configuration
 

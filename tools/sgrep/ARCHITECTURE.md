@@ -24,8 +24,9 @@ render(budget) ──► file headers + path:line: content
   safe subset of rg flags), streams stdout, and handles the missing-binary case
   with a short install hint and nonzero exit.
 - **Normalizer/deduper** — normalizes match lines (collapse whitespace, strip
-  numbers/ids) to cluster near-identical hits; per file, keeps the 3 most distinct
-  representatives when count > 5 and records a `(+N more similar)` remainder.
+  numbers/ids) to cluster near-identical hits; per file, keeps one representative
+  per cluster when count > 5 and records a `(+N more similar)` remainder (or
+  `(+N more, D distinct)` when the budget capped distinct clusters away).
 - **Ranker** — score = match density × path-class weight. Path classes
   (src > tests > generated/vendored) come from built-in patterns, overridable via
   config. Ties break by path sort for determinism.

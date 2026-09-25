@@ -51,6 +51,10 @@ verdict rejects the whole Bash command including any `&&`-chained steps.
 PostToolUse (Read): at most one nudge per session when a whole-file
 Read of a code/data file >= 6KB was allowed but a suite tool was cheaper.
 
+PostToolUse (Grep): at most one nudge per session when a content-mode Grep
+the carve-out let through (single file / head_limit <= 25) returned >= 8
+lines - the size at which sgrep's collapsing and ranking start to matter.
+
 PostToolUse (Bash/PowerShell): when the command invoked one of the 11 suite
 tools, log actual output size to .savings/events.jsonl and roll it into
 .savings/aggregate.json + a regenerated savings_record.md at SAVINGS_ROOT.
@@ -71,7 +75,11 @@ A raw-vs-suite byte "saved" figure is computed for:
     re-running a build to size it would be absurd and non-deterministic
 Other suite tools (repomap, repoindex, tokq) have no raw equivalent to
 measure and are counted without a baseline. rq and testmap are archived
-(docs/decisions/0009 in LLM-tools) and no longer tracked here.
+(docs/decisions/0009 in LLM-tools): they get no savings row, but an
+attempt to call either is appended to .savings/archived-attempts.jsonl
+so an unprompted reach for an archived tool leaves a trace. Logging
+only - never denied, since a deny message would steer the next
+attempt and contaminate the signal.
 These extra subprocesses cost wall-clock time, never model tokens - their
 output is measured for length and discarded, never surfaced to the model.
 
@@ -219,6 +227,82 @@ SUITE_TOOLS = ("xread", "sgrep", "structo", "gitbrief", "repomap",
 SUITE_TOOL_RE = re.compile(
     CMD + r"(?:python3?\s+\S*[\\/])?(?:\./)?(" +
     "|".join(SUITE_TOOLS) + r")(?:\.py|\.cmd|\.sh)?\b")
+
+# Archived tools (docs/decisions/0009). Nothing points at these any more -
+# no shims, no guidance - so an attempt to call one is an unprompted reach,
+# which is exactly the evidence 0009 said a revival would need. Logged
+# silently and never denied: a deny message would push the next attempt one
+# way or the other and contaminate the very signal being measured.
+ARCHIVED_TOOLS = ("rq", "testmap")
+ARCHIVED_TOOL_RE = re.compile(
+    SUITE_TOOL_RE.pattern.replace("|".join(SUITE_TOOLS),
+                                  "|".join(ARCHIVED_TOOLS)))
+
+
+def _session_model(data):
+    """Model id for the session that made this call, or "" if unknown.
+
+    Adoption is not a property of a tool alone: the same guidance, the same
+    PATH and the same repo produce different reach-for rates under different
+    models. An unstamped call count cannot distinguish "this tool is not
+    worth reaching for" from "the model that was running then did not reach
+    for it" - which is precisely the inference docs/decisions/0006 and 0009
+    had to make blind. Stamping every event makes the next such shift
+    visible in the data instead of in someone's recollection.
+
+    Read from the tail of the session transcript, where each assistant
+    message carries its own model id. Cheap (last 64KB, no parse of the
+    whole file) and fail-open: any problem yields "".
+    """
+    path = data.get("transcript_path")
+    if not path or not os.path.isfile(path):
+        return ""
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as fh:
+            if size > 65536:
+                fh.seek(size - 65536)
+                fh.readline()  # discard the partial line
+            tail = fh.read().decode("utf-8", errors="replace")
+        for line in reversed(tail.split("\n")):
+            line = line.strip()
+            if not line or '"model"' not in line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            model = (rec.get("message") or {}).get("model") or ""
+            if model:
+                return model
+    except OSError:
+        pass
+    return ""
+
+def _record_archived_attempt(command, masked, cwd, data):
+    """Append one line per attempted call of an archived tool."""
+    if not SAVINGS_ROOT:
+        return
+    m = ARCHIVED_TOOL_RE.search(masked)
+    if not m:
+        return
+    sep = re.search(r"[;\n]|&&|\|\|", masked[m.end():])
+    end = m.end() + sep.start() if sep else len(command)
+    try:
+        path = os.path.join(SAVINGS_ROOT, ".savings",
+                            "archived-attempts.jsonl")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({
+                "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+                "tool": m.group(1),
+                "model": _session_model(data),
+                "cwd": cwd,
+                "cmd": command[m.start():end][:300],
+            }) + "\n")
+    except OSError:
+        pass  # fail-open, same as the rest of the hook
+
 
 
 def deny(reason: str) -> None:
@@ -510,6 +594,24 @@ def deny_shell(command: str, reason: str) -> None:
                    "command, including steps chained with && || ; or "
                    "newlines — any commit/push/build in it did NOT happen. "
                    "Re-run those as their own call.")
+    # A call that executes a quoted payload (ssh, python -c, bash -c, docker
+    # exec...) turns masking off for the whole command, so rule vocabulary
+    # *inside* the payload matches even when it is inert data - a string
+    # literal in a Python one-liner, say. That is a recorded WONTFIX
+    # (archive/guard-hook-denies-ssh-remote-payloads.md): whether the payload
+    # costs this session context depends on what the remote pipeline does
+    # with its output, which the hook cannot see, and masking the body would
+    # hide a real `os.system("...")` just as well as an inert literal. What
+    # the message can do is name the workaround, so the reader does not spend
+    # a second round-trip rediscovering it.
+    if _EXEC_QUOTED_RE.search(command):
+        reason += (" NOTE: this call executes a quoted payload, so text "
+                   "inside the quotes is read as a command even when it is "
+                   "inert data (a string literal in a `python -c` one-liner, "
+                   "for example) — the hook cannot tell the two apart. If "
+                   "that is what happened here, ship the payload as a file "
+                   "instead: write it to the scratchpad, `scp` it over, and "
+                   "run `ssh host 'python3 /tmp/x.py'`.")
     deny(reason)
 
 
@@ -530,6 +632,15 @@ def check_shell(tool: str, raw_command: str) -> None:
                        "`sgrep PATTERN [PATH]` (start with --files-only or "
                        "--counts-only, then narrow).")
         args = _own_args(command, m.end())
+        # The git branch honours the same bounding pipe as the grep, cat and
+        # range-read branches: stdout that is redirected to a file or piped
+        # through head/tail/wc provably cannot land in context, so it is not
+        # a context cost whatever the subcommand. Scoped with _own_pipeline,
+        # not _own_args, because SEP_RE splits on a single `|` and would cut
+        # the bound off before it could be seen. Filed as
+        # docs/known-issues/guard-hook-git-log-ignores-bounding-pipe.
+        if not _output_reaches_context(_own_pipeline(command, m.end())):
+            continue
         if sub == "log" and _log_is_bounded(args):
             continue
         if sub == "diff" and _diff_is_summary(args):
@@ -543,7 +654,9 @@ def check_shell(tool: str, raw_command: str) -> None:
             "`git log -1`/`-n 1` or `--oneline` with a count of 10 or "
             "fewer, and `git diff` in a summary-only format — `--stat`, "
             "`--numstat`, `--shortstat`, `--name-only`, `--name-status` — "
-            "none of which can print patch text.)"
+            "none of which can print patch text — as is any of these "
+            "with stdout redirected to a file or piped through "
+            "head/tail/wc.)"
         )
     for m in GREP_RE.finditer(command):
         # Scoped per match, not across the whole string: one redirected
@@ -617,14 +730,47 @@ def check_shell(tool: str, raw_command: str) -> None:
                 "`| sls` is allowed and was not matched here.)")
 
 
-def check_grep(tool_input: dict) -> None:
+def _record_carveout(kind, tool_input, data):
+    """Log a Grep call the carve-out let through without a redirect.
+
+    docs/known-issues/bounded-builtin-calls-treated-as-equivalent-to-sgrep:
+    a narrowed Grep is smaller than a directory dump but still returns one
+    raw line per match, with none of sgrep's collapsing or ranking. The
+    carve-out is silent by construction, so the deny message - the only
+    mechanism that reliably moves tool choice - never fires for this class.
+    The filed fix is a nudge; this logs the behavior first, so the nudge is
+    added on evidence that it still happens rather than on a finding from a
+    different model era. Logging only: no deny, no message.
+    """
+    if not SAVINGS_ROOT:
+        return
+    try:
+        path = os.path.join(SAVINGS_ROOT, ".savings", "carveout-passes.jsonl")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({
+                "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+                "session": data.get("session_id") or "",
+                "model": _session_model(data),
+                "kind": kind,
+                "pattern": (tool_input.get("pattern") or "")[:120],
+                "path": (tool_input.get("path") or "")[:200],
+                "glob": (tool_input.get("glob") or "")[:80],
+                "head_limit": tool_input.get("head_limit"),
+            }) + "\n")
+    except OSError:
+        pass  # fail-open, same as the rest of the hook
+
+def check_grep(tool_input: dict, data: dict) -> None:
     if tool_input.get("output_mode") != "content":
         return  # files_with_matches / count are already compact
     head = tool_input.get("head_limit")
     if isinstance(head, (int, float)) and 0 < head <= 25:
+        _record_carveout("head_limit", tool_input, data)
         return  # explicitly bounded peek
     path = tool_input.get("path") or ""
     if path and os.path.isfile(path):
+        _record_carveout("single_file", tool_input, data)
         return  # single-file content grep is bounded and Edit-adjacent
     deny("Grep in content mode across a directory dumps raw lines. Use "
          "`sgrep PATTERN [PATH]` (start with --files-only or --counts-only, "
@@ -695,6 +841,51 @@ def nudge_read(data: dict) -> None:
                 f"allowed, but `{tool}` is usually cheaper for targeted "
                 "access. Prefer the LLM-tools suite for the rest of this "
                 "session, including mid-task."),
+        }
+    }))
+
+
+GREP_NUDGE_FLOOR = 8  # match lines; below this sgrep's collapsing buys nothing
+
+
+def nudge_grep(data: dict) -> None:
+    """Once per session, point a carve-out Grep at what sgrep would have done.
+
+    docs/known-issues/bounded-builtin-calls-treated-as-equivalent-to-sgrep:
+    the carve-out passes are silent, so a narrowed Grep reads as "fine".
+    .savings/carveout-passes.jsonl showed it still happening under the
+    Claude 5 models (9 passes, 0 follow-up sgrep calls in those sessions),
+    which was the stated bar for adding this. Only fires when the result
+    was big enough for sgrep's shape to matter, and logs that it fired so
+    the log can show whether the nudge changes anything.
+    """
+    tool_input = data.get("tool_input") or {}
+    if tool_input.get("output_mode") != "content":
+        return
+    resp = data.get("tool_response")
+    lines = resp.get("numLines") if isinstance(resp, dict) else None
+    if not isinstance(lines, int):
+        lines = sum(1 for ln in _response_text(resp).splitlines() if ln.strip())
+    if lines < GREP_NUDGE_FLOOR:
+        return
+    marker = os.path.join(
+        tempfile.gettempdir(),
+        f"llm-tools-grep-nudge-{data.get('session_id') or 'nosession'}.flag")
+    if os.path.exists(marker):
+        return
+    with open(marker, "w"):
+        pass
+    _record_carveout("nudge_sent", tool_input, data)
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": (
+                f"Guard nudge: that narrowed Grep returned {lines} raw lines. "
+                "The hook allowing it doesn't make it the lean choice: "
+                "`sgrep PATTERN PATH` would have collapsed near-identical "
+                "matches, ranked files, and capped output (--no-collapse "
+                "when you need every line). Prefer sgrep for the rest of "
+                "this session."),
         }
     }))
 
@@ -1139,6 +1330,8 @@ def record_savings(data: dict) -> None:
     # its arguments is a real one. Offsets are preserved, so the slice still
     # comes from the raw command — the baseline needs the actual pattern.
     masked = mask_literals(command)
+    _record_archived_attempt(command, masked,
+                              data.get("cwd") or os.getcwd(), data)
     m = SUITE_TOOL_RE.search(masked)
     if not m:
         return
@@ -1176,6 +1369,11 @@ def record_savings(data: dict) -> None:
         # creditable; see _event_credited.
         "v": EVENT_SCHEMA,
         "tool": suite_tool,
+        # Which model made the call. Added 2026-09-11; rows written before
+        # that lack the field. Additive, so it does not change how any
+        # existing row is credited and the schema version stands.
+        "model": _session_model(data),
+        "session": data.get("session_id") or "",
         "cwd": cwd,
         # The invocation, so a surprising row can be traced back to the call
         # that produced it. Machine-local: .savings/ is gitignored.
@@ -1209,6 +1407,8 @@ def main() -> None:
     if event == "PostToolUse":
         if tool == "Read":
             nudge_read(data)
+        elif tool == "Grep":
+            nudge_grep(data)
         record_savings(data)
         return
     if tool in ("Bash", "PowerShell"):
@@ -1216,7 +1416,7 @@ def main() -> None:
     elif tool == "Read":
         check_read(tool_input)
     elif tool == "Grep":
-        check_grep(tool_input)
+        check_grep(tool_input, data)
 
 
 if __name__ == "__main__":

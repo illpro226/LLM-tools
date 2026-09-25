@@ -168,7 +168,9 @@ sgrep PATTERN -C 2 -i -F -w -t py -g '*.rs'   # small rg pass-through flag set
 
 **Ranking:** matches grouped by file; near-identical hits deduplicated
 (whitespace collapsed, digit runs equalized) to one representative per
-distinct normalized form, 3 at most, plus a `(+N more similar)` remainder.
+distinct normalized form, plus a `(+N more similar)` remainder; if the
+budget caps a file below its distinct forms the footer says
+`(+N more, D distinct)` instead.
 Files rank by match count × path class — src before tests before generated.
 
 **Exit codes:** follows grep — 0 matches found, 1 no matches, 2 error.

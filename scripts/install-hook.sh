@@ -44,7 +44,7 @@ cat <<'JSON'
     ],
     "PostToolUse": [
       {
-        "matcher": "Read|Bash|PowerShell",
+        "matcher": "Read|Grep|Bash|PowerShell",
         "hooks": [
           { "type": "command",
             "command": "python \"HOME/.claude/hooks/llm-tools-guard.py\"",

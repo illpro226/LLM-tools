@@ -113,6 +113,37 @@ def test_over_five_matches_shows_three_distinct_plus_note():
     assert "def setup_needle():" in texts
 
 
+_JSON_KEYS = [
+    '"tengu_chrome_install_upsell": true,',
+    '"tengu_cowork_chrome_automode_default": true,',
+    '"tengu_chrome_auto_enable": true,',
+    '"cachedChromeExtensionInstalled": true,',
+    '"claudeInChromeDefaultEnabled": false,',
+    '"hasCompletedClaudeInChromeOnboarding": true,',
+]
+
+
+def _entry(texts):
+    return {"count": len(texts), "contexts": {},
+            "matches": [(i + 1, t) for i, t in enumerate(texts)]}
+
+
+def test_distinct_lines_are_never_collapsed_as_similar():
+    """Regression: 6 distinct JSON keys showed 3 + "(+3 more similar)",
+    hiding the one key the search was for."""
+    shown, hidden = sgrep.select_matches(_entry(_JSON_KEYS), cap=None)
+    assert hidden == 0
+    assert '"claudeInChromeDefaultEnabled": false,' in [t for _, t in shown]
+
+
+def test_budget_capped_footer_admits_hidden_lines_are_distinct():
+    files = {"cfg.json": _entry(_JSON_KEYS)}
+    lines = _render(files, cap=3)
+    assert "(+3 more, 3 distinct)" in lines
+    assert not any("similar" in l for l in lines)
+    assert sum("--no-collapse" in l for l in lines) == 1  # hint once, not per file
+
+
 def test_five_or_fewer_shows_all():
     files = canned("basic.jsonl")
     core = files[by_suffix(files, "src/core.py")]

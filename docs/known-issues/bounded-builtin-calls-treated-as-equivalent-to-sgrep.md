@@ -1,5 +1,20 @@
 # agent treats a guard-hook-*allowed* bounded Grep/Read call as equivalent to using sgrep/xread, when the output shape is still worse
 
+**MITIGATED 2026-09-24 (guard hook).** The log answered the question below.
+From 2026-09-14 to 2026-09-21, `.savings/carveout-passes.jsonl` recorded 9
+carve-out passes under `claude-opus-5` (5x `head_limit`) and `claude-sonnet-5`
+(4x `single_file`). None of those sessions called `sgrep` afterwards, and the
+Sonnet session called no suite tool at all. So the behavior still happens
+under the current models, and the nudge went in: `nudge_grep` in PostToolUse,
+sent at most once per session, only when a content-mode Grep returned 8 or
+more lines. It names what sgrep does differently (collapse, rank, cap), not
+just that sgrep exists. The PostToolUse matcher now includes `Grep`, in the
+installers and in the live settings. Tests are in `scripts/test-guard-hook.py`.
+Each nudge logs a `kind: "nudge_sent"` row to the same jsonl. **Close this**
+once those rows are regularly followed by an `sgrep` event in
+`.savings/events.jsonl` for the same session. If they aren't, the nudge alone
+doesn't fix it, and the next step is to deny above a line count instead.
+
 **STATUS at filing: open.** **Update 2026-09-11: still open; instrumented,
 not yet fixed.** The recommended nudge was deliberately *not* added yet. This
 issue's diagnosis rests on the agent's judgment being unreliable under task
