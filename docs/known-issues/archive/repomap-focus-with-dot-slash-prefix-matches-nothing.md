@@ -1,6 +1,8 @@
 # repomap --focus ./PATH silently focuses on nothing
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session.
+**RESOLVED 2026-10-09 (repomap v0.5.0).** The focus path is normalized with `posixpath.normpath`.
+
+Filed 2026-10-08 from a full-suite review session.
 
 ## What broke
 

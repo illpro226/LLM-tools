@@ -1,5 +1,20 @@
 # repomap Changelog
 
+- 2026-10-09: v0.5.0 — fixes for three known issues and one shared one,
+  each pinned by a test that fails on v0.4.0.
+  **Test fixtures outranked the package they test.** `repomap
+  tools/repoindex --max-tokens 1200` showed only fixture outlines: a
+  fixture family (mathutil.py/.js/.go, each with `add`) mentions itself
+  far more than modules get mentioned. The order is now weighted by path
+  class (src 1.0, tests 0.5, fixtures/testdata 0.25, as sgrep classes
+  paths), non-src headers carry the class, and an over-budget tree folds
+  fixture directories first and says so. The same call now shows six
+  package outlines instead of three fixtures.
+  **A non-UTF-8 `.gitignore` tracebacked, and a BOM'd one un-ignored its
+  first rule**; it is read as `utf-8-sig` with replacement.
+  **`--focus ./pkg` matched nothing**; the path is normalized.
+  **A form feed shifted every later `path:line`** (`str.splitlines()`);
+  lines split on newlines only. 6 new tests (35 total).
 - 2026-09-24: v0.4.0 — fixes from a suite review, each pinned by a test
   that fails on v0.3.0 (the ranking test pins equality with the old
   scores instead).

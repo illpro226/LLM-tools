@@ -42,7 +42,8 @@ def sym_line(rel, needle, rest):
 def ref_headers(out):
     """File-outline header paths in output order."""
     return [l.split("  [refs")[0] for l in out.splitlines()
-            if re.match(r"^\S.*  \[refs \d+\](  \(\d+ symbols?\))?$", l)]
+            if re.match(r"^\S.*  \[refs \d+(?:, \w+)?\](  \(\d+ symbols?\))?$",
+                        l)]
 
 
 def est(out):
@@ -407,3 +408,75 @@ def test_ts_decl_after_a_multiline_template_is_top_level(tmp_path, capsys):
     assert code == 0
     assert "inner" not in out
     assert re.search(r"t\.ts:9 export function second\(\)", out)
+
+
+# ------------------------------------------------ v0.5.0 review fixes
+
+def _mini(tmp_path, files):
+    for rel, text in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(text, bytes):
+            p.write_bytes(text)
+        else:
+            p.write_text(text, encoding="utf-8")
+    return str(tmp_path)
+
+
+def test_gitignore_non_utf8_does_not_traceback(tmp_path, capsys):
+    root = _mini(tmp_path, {".gitignore": b"# caf\xe9 build output\nbuild/\n",
+                            "a.py": "def a():\n    pass\n",
+                            "build/b.py": "def b():\n    pass\n"})
+    code, out, err = run([root], capsys)
+    assert code == 0, err
+    assert "b.py" not in out
+
+
+def test_gitignore_bom_keeps_its_first_rule(tmp_path, capsys):
+    root = _mini(tmp_path, {".gitignore": b"\xef\xbb\xbfsecret.py\n",
+                            "a.py": "def a():\n    pass\n",
+                            "secret.py": "def s():\n    pass\n"})
+    out = run([root], capsys)[1]
+    assert "secret.py" not in out
+
+
+def test_focus_with_dot_slash_prefix(tmp_path, capsys, monkeypatch):
+    root = _mini(tmp_path, {"pkg/a.py": "def alpha():\n    pass\n",
+                            "other/b.py": "def beta():\n    pass\n"})
+    monkeypatch.chdir(root)
+    plain = run([".", "--focus", "pkg"], capsys)[1]
+    dotted = run([".", "--focus", "./pkg"], capsys)[1]
+    assert dotted == plain
+    assert "pkg/a.py:1 def alpha()" in dotted
+
+
+def test_fixtures_rank_below_the_code_they_test(tmp_path, capsys):
+    family = {"tests/fixtures/%s/mathutil.%s" % (d, ext):
+              "def add(a, b):\n    return mathutil_add(a, b)\n"
+              for d, ext in (("py", "py"), ("py2", "py"), ("py3", "py"))}
+    family.update({
+        "pkg/engine.py": "def run():\n    return 1\n",
+        "pkg/cli.py": "from engine import run\n\ndef main():\n    run()\n",
+    })
+    root = _mini(tmp_path, family)
+    out = run([root, "--max-tokens", "0"], capsys)[1]
+    heads = ref_headers(out)
+    assert heads[0].endswith("pkg/engine.py"), heads
+    assert any(l.endswith(", fixtures]") for l in out.splitlines())
+
+
+def test_over_budget_tree_folds_fixture_dirs_and_says_so(tmp_path, capsys):
+    files = {"tests/fixtures/f%02d.py" % i: "def f%d():\n    pass\n" % i
+             for i in range(40)}
+    files["pkg/core.py"] = "def core():\n    pass\n"
+    root = _mini(tmp_path, files)
+    out = run([root, "--max-tokens", "150"], capsys)[1]
+    assert "fixtures/ … (40 files)" in out
+    assert "(fixture directories folded for --max-tokens 150)" in out
+
+
+def test_form_feed_does_not_shift_symbol_lines(tmp_path, capsys):
+    root = _mini(tmp_path, {"ff.c": b"int a(void);\n\x0c\nint target(void) {\n"
+                                     b"  return 1;\n}\n"})
+    out = run([root, "--max-tokens", "0"], capsys)[1]
+    assert re.search(r"ff\.c:3 .*target", out), out

@@ -27,10 +27,11 @@ import argparse
 import collections
 import fnmatch
 import os
+import posixpath
 import re
 import sys
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 # ADR-007: the token cap is on by default. An orientation map is read at
 # the start of a task, when context is most valuable; 3000 covers a
@@ -60,6 +61,16 @@ DOC_CAP = 80         # max chars of a docstring/comment first line
 SIZE_CAP = 1_000_000  # bytes; larger files are listed in the tree only
 FULL_FLOOR = 5       # min outlines kept at full detail before dropping sigs
 MIN_NAME = 3         # identifiers shorter than this don't count for ranking
+# Path classes, as sgrep has them, so test data does not outrank the code
+# it tests. Fixture families (mathutil.py/.js/.go, each defining `add`)
+# mention each other far more than modules get mentioned, and filled the
+# whole budget for `repomap tools/repoindex` with fixture outlines.
+FIXTURE_PARTS = {"fixtures", "fixture", "testdata", "__fixtures__",
+                 "__snapshots__"}
+TEST_PARTS = {"test", "tests", "__tests__", "spec"}
+TEST_NAME = re.compile(
+    r"^test_|_test\.\w+$|\.test\.\w+$|\.spec\.\w+$|^conftest\.py$")
+CLASS_WEIGHT = {"src": 1.0, "tests": 0.5, "fixtures": 0.25}
 
 IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,}")
 
@@ -428,7 +439,10 @@ def _load_gitignore(root):
     """
     pats = []
     try:
-        with open(os.path.join(root, ".gitignore"), encoding="utf-8") as fh:
+        # utf-8-sig: a BOM glued to the first rule un-ignored it. replace:
+        # one latin-1 byte in a comment raised UnicodeDecodeError.
+        with open(os.path.join(root, ".gitignore"), encoding="utf-8-sig",
+                  errors="replace") as fh:
             for line in fh:
                 s = line.strip()
                 if not s or s.startswith("#") or s.startswith("!"):
@@ -497,7 +511,7 @@ def scan(root, pats):
                     source = fh.read()
             except OSError:
                 continue
-            lines = source.splitlines()
+            lines = split_lines(source)
             symbols = extract(source, lines)
             stem = os.path.splitext(fn)[0]
             files.append({
@@ -508,8 +522,31 @@ def scan(root, pats):
                           if len(s["name"]) >= MIN_NAME},
                 "tokens": set(IDENT.findall(source)),
                 "score": 0,
+                "class": path_class(frel),
             })
     return tree, files, total
+
+
+_NEWLINE = re.compile(r"\r\n|\r|\n")
+
+
+def split_lines(source):
+    """Lines numbered as ast and editors number them; str.splitlines()
+    also breaks on form feeds and U+2028, shifting every `path:line`."""
+    lines = _NEWLINE.split(source)
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
+def path_class(rel):
+    """'fixtures', 'tests' or 'src' for a repo-relative path."""
+    parts = rel.lower().split("/")
+    if any(p in FIXTURE_PARTS for p in parts[:-1]):
+        return "fixtures"
+    if any(p in TEST_PARTS for p in parts[:-1]) or TEST_NAME.search(parts[-1]):
+        return "tests"
+    return "src"
 
 
 # ------------------------------------------------------------------ ranker
@@ -535,7 +572,8 @@ def rank(files):
             score += 2 * (df[f["stem"]] - (f["stem"] in toks))
         score += sum(df[n] - (n in toks) for n in f["names"])
         f["score"] = score
-    files.sort(key=lambda f: (-f["score"], f["rel"]))
+    files.sort(key=lambda f: (-f["score"] * CLASS_WEIGHT[f["class"]],
+                              f["rel"]))
 
 
 # ---------------------------------------------------------------- renderer
@@ -547,15 +585,22 @@ def _count_files(node):
     return n
 
 
+def _has_fixture_dir(node):
+    return any(d.lower() in FIXTURE_PARTS or _has_fixture_dir(child)
+               for d, child in node["dirs"].items())
+
+
 def _related(drel, focus):
     return (focus == drel or focus.startswith(drel + "/")
             or drel.startswith(focus + "/"))
 
 
-def _tree_lines(tree, focus, depth_limit, cap=None):
+def _tree_lines(tree, focus, depth_limit, cap=None, fold=False):
     """`cap` limits the entries listed per directory (dirs and files each),
     the rest counted: collapsing depth alone never shrinks a directory's
-    own listing, so a root holding 3,000 files ignored every budget."""
+    own listing, so a root holding 3,000 files ignored every budget.
+    `fold` collapses fixture directories (FIXTURE_PARTS) to a count, the
+    first thing a budget gives up."""
     out = []
 
     def more(indent, n, kind):
@@ -571,6 +616,9 @@ def _tree_lines(tree, focus, depth_limit, cap=None):
             if depth_limit and depth >= depth_limit:
                 collapse = True
             elif focus and depth >= 2 and not _related(drel, focus):
+                collapse = True
+            elif fold and d.lower() in FIXTURE_PARTS and not (
+                    focus and _related(drel, focus)):
                 collapse = True
             if collapse and (child["dirs"] or child["files"]):
                 n = _count_files(child)
@@ -622,7 +670,8 @@ def _collapse_tests(symbols):
 
 def _file_block(f, prefix, detail):
     dpath = prefix + f["rel"]
-    lines = ["%s  [refs %d]" % (dpath, f["score"])]
+    tag = "" if f["class"] == "src" else ", " + f["class"]
+    lines = ["%s  [refs %d%s]" % (dpath, f["score"], tag)]
     if detail == "summary":
         n = len(f["symbols"])
         lines[0] += "  (%d symbol%s)" % (n, "" if n == 1 else "s")
@@ -641,13 +690,13 @@ def _file_block(f, prefix, detail):
     return lines
 
 
-def _render(ctx, stage, k, depth_limit, cap=None):
+def _render(ctx, stage, k, depth_limit, cap=None, fold=False):
     lines = ["repomap %s — %d source files / %d files  "
              "(ranking: heuristic, identifier references)"
              % (ctx["label"], ctx["n_source"], ctx["n_total"]), ""]
     root_label = ctx["label"].replace("\\", "/").rstrip("/") or "."
     lines.append(root_label + "/")
-    lines += _tree_lines(ctx["tree"], ctx["focus"], depth_limit, cap)
+    lines += _tree_lines(ctx["tree"], ctx["focus"], depth_limit, cap, fold)
     order = ctx["order"]
     collapsed = 0
     if stage != "tree":
@@ -675,6 +724,9 @@ def _render(ctx, stage, k, depth_limit, cap=None):
         notes.append(note + ")")
     elif stage == "tree" and ctx["budget"]:
         notes.append("(tree only for --max-tokens %d)" % ctx["budget"])
+    if fold and _has_fixture_dir(ctx["tree"]):
+        notes.append("(fixture directories folded for --max-tokens %d)"
+                     % ctx["budget"])
     if cap is not None:
         notes.append("(directory listings capped at %d entr%s each for "
                      "--max-tokens %d)" % (cap, "y" if cap == 1 else "ies",
@@ -704,7 +756,7 @@ def build_output(ctx):
             lo, hi = floor, n
             while lo <= hi:
                 mid = (lo + hi) // 2
-                cand = _render(ctx, stage, mid, tree_depth, tree_cap)
+                cand = _render(ctx, stage, mid, tree_depth, tree_cap, True)
                 if _est(cand) <= budget:
                     best = cand
                     lo = mid + 1
@@ -719,22 +771,23 @@ def build_output(ctx):
         if best:
             return best
     depth, cap = _fit_tree(ctx, budget)
-    return _render(ctx, "tree", 0, depth, cap)
+    return _render(ctx, "tree", 0, depth, cap, True)
 
 
 def _fit_tree(ctx, limit):
     """(depth_limit, cap) of the most detailed tree-only render within
-    `limit`: shallower first, then fewer entries listed per directory —
-    the rung that makes the ladder terminate on a wide directory. Floors
-    at depth 1 with one entry of each kind, which is O(1)."""
+    `limit`, fixture directories folded (over budget, test data is the
+    first thing to go): shallower first, then fewer entries listed per
+    directory — the rung that makes the ladder terminate on a wide
+    directory. Floors at depth 1 with one entry of each kind, O(1)."""
     for depth in (None, 3, 2, 1):
-        if _est(_render(ctx, "tree", 0, depth)) <= limit:
+        if _est(_render(ctx, "tree", 0, depth, None, True)) <= limit:
             return depth, None
     root = ctx["tree"]
     lo, hi, best = 1, max(len(root["dirs"]), len(root["files"]), 1), 1
     while lo <= hi:
         mid = (lo + hi) // 2
-        if _est(_render(ctx, "tree", 0, 1, mid)) <= limit:
+        if _est(_render(ctx, "tree", 0, 1, mid, True)) <= limit:
             best, lo = mid, mid + 1
         else:
             hi = mid - 1
@@ -771,8 +824,12 @@ def main(argv=None):
             raise RepomapError("not a directory: %s" % args.dir)
         focus = None
         if args.focus:
-            focus = args.focus.replace("\\", "/").strip("/")
-            if not os.path.exists(os.path.join(args.dir, focus)):
+            # normpath: `./tools/x` kept its `./` and matched no file.
+            focus = posixpath.normpath(
+                args.focus.replace("\\", "/")).strip("/")
+            if focus == ".":
+                focus = None
+            if focus and not os.path.exists(os.path.join(args.dir, focus)):
                 raise RepomapError("--focus path not found under %s: %s"
                                    % (args.dir, args.focus))
         pats = _load_gitignore(args.dir)

@@ -1,6 +1,8 @@
 # repomap ranks test fixtures above the package they test
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session
+**RESOLVED 2026-10-09 (repomap v0.5.0).** The order is weighted by path class (src 1.0, tests 0.5, fixtures 0.25), and an over-budget tree folds fixture directories first. The repro now shows six package outlines.
+
+Filed 2026-10-08 from a full-suite review session
 (dogfooding friction, not a crash).
 
 ## What broke

@@ -1,6 +1,8 @@
 # repomap: a non-UTF-8 .gitignore tracebacks; a BOM'd one un-ignores its first rule
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session.
+**RESOLVED 2026-10-09 (repomap v0.5.0).** Read as `utf-8-sig` with `errors=replace`. repoindex's `load_gitignore` is fixed separately.
+
+Filed 2026-10-08 from a full-suite review session.
 
 ## What broke
 
