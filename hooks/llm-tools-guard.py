@@ -130,6 +130,9 @@ DIFF_SUMMARY_RE = re.compile(
 DIFF_PATCH_RE = re.compile(r"(?:^|\s)(?:-p|-u|--patch|--patch-with-stat|"
                            r"--cc|-c|-U\d*|--unified(?:=\d+)?)(?=\s|$)")
 GREP_RE = re.compile(CMD + r"(?:command\s+)?(?:grep|egrep|fgrep|rg)\b")
+# sgrep --plain is a pipe stage: every row, uncollapsed. Read directly it is
+# the grep dump the suite exists to replace.
+SGREP_PLAIN_RE = re.compile(CMD + r"sgrep(?:\.cmd)?\b[^;&|\n]*\s--plain\b")
 CAT_RE = re.compile(CMD + r"cat\s+\S")
 PS_GC_RE = re.compile(CMD + r"(?:Get-Content|gc|type)\b", re.IGNORECASE)
 PS_SLS_RE = re.compile(CMD + r"(?:Select-String|sls)\b", re.IGNORECASE)
@@ -673,6 +676,15 @@ def check_shell(tool: str, raw_command: str) -> None:
             "output with `| grep` is allowed and was not matched here; so "
             "is a search whose stdout goes to a file or through "
             "head/tail/wc, which costs no tokens.)")
+    for m in SGREP_PLAIN_RE.finditer(command):
+        own = _own_pipeline(command, m.end())
+        if "|" in own or STDOUT_REDIRECT_RE.search(own):
+            continue
+        deny_shell(
+            command,
+            "`sgrep --plain` prints every match uncollapsed; it is for piping "
+            "into sort/uniq/awk or a file, not for reading. Drop --plain to "
+            "read the ranked, collapsed digest.")
     if (CAT_RE.search(command) and "<<" not in command
             and not STDOUT_REDIRECT_RE.search(command)
             and not BOUNDED_PIPE_RE.search(command)):

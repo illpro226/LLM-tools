@@ -142,6 +142,16 @@ CORPUS = [
     ("Select-String foo *.py", "PowerShell", "DENY", "plain Select-String", None),
     ("Get-Content x.txt", "PowerShell", "DENY", "unbounded Get-Content", None),
 
+    # --- sgrep --plain is a pipe stage, not a reading mode ---------------
+    ("sgrep --plain PATCH dev.log", "Bash", "DENY",
+     "sgrep --plain read directly", None),
+    ("sgrep --plain PATCH dev.log | sort | uniq -c", "Bash", "ALLOW",
+     "sgrep --plain as a pipe stage", None),
+    ("sgrep --plain PATCH dev.log > rows.txt", "Bash", "ALLOW",
+     "sgrep --plain to a file", None),
+    ("sgrep PATCH dev.log", "Bash", "ALLOW", "plain sgrep digest", None),
+    ("sgrep --plain x a | sort; sgrep --plain y b", "Bash", "DENY",
+     "second sgrep --plain unpiped", None),
     # --- carve-outs -------------------------------------------------------
     ("git log -1", "Bash", "ALLOW", "bounded log", None),
     ("git log --oneline -5", "Bash", "ALLOW", "oneline with small count", None),
