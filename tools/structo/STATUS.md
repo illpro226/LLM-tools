@@ -1,12 +1,16 @@
 # structo Status
 
-Implemented (v0.6.1) and passing tests.
+Implemented (v0.7.0) and passing tests.
 
 - `structo.py` — single-file CLI printing the schema and shape of a data
   file instead of its content. Formats: JSON, JSONL, YAML (via PyYAML —
   the one optional dependency, with a clear error if absent), TOML, CSV,
-  TSV, XML, generic log. Detection by extension, else content sniffing;
-  the header states which.
+  TSV, XML, generic log. Detection by extension, else content sniffing,
+  or `--format`; the header states which. `-` (or no FILE, with input
+  piped in) reads stdin, spooled to a private temp file so every mode
+  works on it; messages name it `<stdin>`. An empty sniffed file exits
+  2 rather than reading as JSON, and a first line that parses as JSON
+  (`["a"]`, `[1]`) is not taken for a TOML table header.
 - Streaming throughout (ADR-001): JSON via an incremental event tokenizer
   (no `json.load` on whole files), JSONL per record, YAML via the PyYAML
   event API, CSV per row, logs per line, XML via `iterparse` with element
@@ -18,12 +22,16 @@ Implemented (v0.6.1) and passing tests.
   (key presence / parent object instances), array length stats (always
   exact); array *elements* beyond `--sample N` (default 10) are not
   aggregated and the line carries a `~` marker (ADR-003 — sampling is
-  first-N, deterministic, no RNG). One or two example values per scalar.
+  first-N, deterministic, no RNG). One or two example values per scalar,
+  bools included (`e.g. true`). YAML scalars are typed by PyYAML's own
+  resolver, so `yes`/`off`/`TRUE` are bools and dates are `datetime`,
+  as `yaml.safe_load` returns them.
 - CSV/TSV: per-column type, null rate, min/max (numeric or lexicographic;
   omitted for booleans), cardinality (bounded distinct counter, `~` past
   256), exactly 3 sample rows.
 - Logs: timestamp format (iso-8601/syslog/clf/epoch), exact line count,
-  top message templates (numbers/hex/uuids/quoted strings normalized,
+  top message templates (numbers/hex/uuids/quoted strings normalized;
+  `<hex>` needs an a-f letter, so long decimal ids stay `<n>`;
   bounded table), first/last lines with `path:line` refs.
 - `--path a.b[0].c` zooms into a JSON/YAML/TOML subtree (per record for
   JSONL; a leading `[N]` picks JSONL record N instead — ADR-004);
@@ -60,8 +68,10 @@ Implemented (v0.6.1) and passing tests.
   bottomed out at one line per top-level key (ADR-006).
 - Text reads decode as `utf-8-sig`, so a leading byte-order mark (Excel
   "CSV UTF-8", PowerShell 5) is dropped instead of corrupting the first
-  CSV header or JSONL record; non-utf-8 TOML is an error, not a traceback.
-- Tests: `tests/test_structo.py` (76 tests) over one committed fixture
+  CSV header or JSONL record; non-utf-8 TOML, malformed YAML, CSV errors
+  and unreadable files are one-line errors with exit 2, not tracebacks.
+  A CSV cell of any length is read (the 128 KiB default limit is lifted).
+- Tests: `tests/test_structo.py` (87 tests) over one committed fixture
   per format plus the generated large files (slow-marked).
 
 Not done / later: XML has no `--path` zoom and no `--select`; no

@@ -1,6 +1,8 @@
 # structo tracebacks on malformed YAML and oversized CSV fields
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session.
+**RESOLVED 2026-10-09 (structo v0.7.0).** YAML, CSV and OS errors are one-line exit-2 errors; the CSV field limit is lifted.
+
+Filed 2026-10-08 from a full-suite review session.
 
 ## What broke
 

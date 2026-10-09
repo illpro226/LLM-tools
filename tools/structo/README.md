@@ -7,6 +7,8 @@ instead of the content. A 2 MB JSON dump becomes twenty lines.
 ```
 ./structo.py FILE                summarize (format auto-detected:
                                  json/jsonl/yaml/toml/csv/tsv/xml/log)
+CMD | ./structo.py -             the same, from stdin
+./structo.py FILE --format yaml  skip detection
 ./structo.py FILE --path a.b[0].c    zoom into a JSON/YAML/TOML subtree
                                  (a leading [N] picks JSONL record N;
                                   [-1] is the last, [-2] the one before)

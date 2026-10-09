@@ -1,6 +1,8 @@
 # structo sniffs a one-line JSON array as TOML, and an empty file as JSON
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session. Minor:
+**RESOLVED 2026-10-09 (structo v0.7.0).** A first line that parses as JSON is JSON; an empty sniffed file exits 2 saying so.
+
+Filed 2026-10-08 from a full-suite review session. Minor:
 extensionless files only.
 
 ## What broke

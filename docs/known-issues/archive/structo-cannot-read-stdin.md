@@ -1,5 +1,7 @@
 # structo cannot read stdin
 
+**RESOLVED 2026-10-09 (structo v0.7.0).** `structo -` (or no FILE with input piped in) reads stdin, and `--format` skips detection.
+
 **Date:** 2026-10-06
 **Found in:** bible-atlas, while inspecting an API response
 

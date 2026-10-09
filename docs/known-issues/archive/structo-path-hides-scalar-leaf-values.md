@@ -1,6 +1,8 @@
 # structo --path on a bool leaf prints the type, not the value
 
-**STATUS: open.** Filed 2026-09-30 from a home-folder session (iLO 4 login triage).
+**RESOLVED 2026-10-09 (structo v0.7.0).** Bools carry an example value (`root: bool  e.g. true`), at a leaf and on a parent object.
+
+Filed 2026-09-30 from a home-folder session (iLO 4 login triage).
 
 ## What broke
 

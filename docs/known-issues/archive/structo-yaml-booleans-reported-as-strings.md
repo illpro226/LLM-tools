@@ -1,6 +1,8 @@
 # structo types YAML booleans `yes`/`off`/`TRUE` as strings
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session. Minor.
+**RESOLVED 2026-10-09 (structo v0.7.0).** Plain scalars are typed by PyYAML's resolver.
+
+Filed 2026-10-08 from a full-suite review session. Minor.
 
 ## What broke
 

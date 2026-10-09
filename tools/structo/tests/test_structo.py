@@ -740,3 +740,113 @@ def test_non_utf8_toml_is_an_error_not_a_traceback(tmp_path, capsys):
     sniffed = tmp_path / "settings.conf"
     sniffed.write_bytes(b'name = "caf\xe9"\nport = 80\n')
     assert "format: log (sniffed)" in ok([str(sniffed)], capsys)
+
+
+# ------------------------------------------------ v0.7.0 review fixes
+
+import io  # noqa: E402
+import sys  # noqa: E402
+
+
+def test_yaml_scalars_typed_as_pyyaml_loads_them(tmp_path, capsys):
+    p = tmp_path / "flags.yaml"
+    p.write_text("enabled: yes\ndebug: off\nstrict: TRUE\nport: 0x1F\n"
+                 "when: 2026-10-09\nname: \"yes\"\n", encoding="utf-8")
+    out = norm(ok([str(p)], capsys))
+    assert "enabled: bool 100% e.g. true" in out
+    assert "debug: bool 100% e.g. false" in out
+    assert "strict: bool 100% e.g. true" in out
+    assert "port: int 100% e.g. 0x1F" in out
+    assert "when: datetime 100% e.g. 2026-10-09" in out
+    assert 'name: str 100% e.g. "yes"' in out
+    assert ok([str(p), "--path", "debug", "--raw"], capsys).strip() == "false"
+    assert ok([str(p), "--path", "port", "--raw"], capsys).strip() == "31"
+
+
+def test_bool_leaf_shows_its_value(tmp_path, capsys):
+    p = tmp_path / "acct.json"
+    p.write_text('{"Oem": {"Hp": {"Privileges": {"LoginPriv": true}}}}',
+                 encoding="utf-8")
+    out = ok([str(p), "--path", "Oem.Hp.Privileges.LoginPriv"], capsys)
+    assert "root: bool  e.g. true" in out
+
+
+def test_malformed_yaml_is_an_error_not_a_traceback(tmp_path, capsys):
+    p = tmp_path / "bad.yaml"
+    p.write_text("a: [1, 2\nb: : :\n", encoding="utf-8")
+    code, out, err = run([str(p)], capsys)
+    assert code == 2 and out == ""
+    assert err.startswith("structo: not valid yaml:")
+    assert "\n" not in err.strip()
+
+
+def test_csv_cell_past_the_default_field_limit(tmp_path, capsys):
+    p = tmp_path / "big.csv"
+    p.write_text("id,blob\n1," + "x" * 200000 + "\n", encoding="utf-8")
+    out = ok([str(p)], capsys)
+    assert "columns (2), rows 1" in out
+
+
+def test_one_line_json_array_is_not_toml(tmp_path, capsys):
+    for text, item in (('["alpha"]\n', "str"), ("[1]\n", "int")):
+        p = tmp_path / "arrfile"
+        p.write_text(text, encoding="utf-8")
+        out = ok([str(p)], capsys)
+        assert "format: json (sniffed)" in out
+        assert "items: %s" % item in out
+    p.write_text("[project]\nname = \"x\"\n", encoding="utf-8")
+    assert "format: toml (sniffed)" in ok([str(p)], capsys)
+
+
+def test_empty_extensionless_file_says_empty(tmp_path, capsys):
+    p = tmp_path / "emptyfile"
+    p.write_text("  \n", encoding="utf-8")
+    code, out, err = run([str(p)], capsys)
+    assert code == 2
+    assert "is empty" in err
+
+
+def test_log_long_decimal_ids_are_numbers_not_hex(tmp_path, capsys):
+    p = tmp_path / "app.log"
+    p.write_text("job 20240100 finished in 100 ms\n"
+                 "job 20240101 finished in 101 ms\n"
+                 "job deadbeef99 finished in 5 ms\n", encoding="utf-8")
+    out = ok([str(p)], capsys)
+    assert "2× job <n> finished in <n> ms" in out
+    assert "1× job <hex> finished in <n> ms" in out
+
+
+class _Stdin:
+    def __init__(self, data, tty=False):
+        self.buffer = io.BytesIO(data)
+        self._tty = tty
+
+    def isatty(self):
+        return self._tty
+
+
+def test_reads_stdin_with_dash(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", _Stdin(b'{"a": {"b": [1, 2]}}'))
+    out = ok(["-", "--path", "a.b"], capsys)
+    assert out.startswith("structo <stdin> — format: json (sniffed)")
+    assert "root: array" in out
+
+
+def test_reads_piped_stdin_without_a_file(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", _Stdin(b"a: 1\n"))
+    out = ok(["--format", "yaml"], capsys)
+    assert "format: yaml (--format)" in out
+
+
+def test_stdin_errors_name_stdin_not_the_spool_file(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", _Stdin(b'{"a": 1}'))
+    code, out, err = run(["-", "--path", "nope"], capsys)
+    assert code == 2
+    assert err.strip() == "structo: --path not found in <stdin>"
+
+
+def test_stdin_select_and_raw(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", _Stdin(b'[{"id": 1}, {"id": 2}]'))
+    assert ok(["-", "--select", "id"], capsys).split() == ["id", "1", "2"]
+    monkeypatch.setattr(sys, "stdin", _Stdin(b'{"v": "x y"}'))
+    assert ok(["-", "--path", "v", "--raw"], capsys) == "x y\n"

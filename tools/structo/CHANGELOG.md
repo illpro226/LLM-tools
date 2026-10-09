@@ -1,5 +1,25 @@
 # structo Changelog
 
+- 2026-10-09: v0.7.0 — fixes for six known issues, each pinned by a test
+  that fails on v0.6.1.
+  **stdin.** `CMD | structo -` (or no FILE with input piped in) reads
+  stdin; it is spooled to a private temp file so `--path`, `--raw` and
+  `--select` all work, and messages call it `<stdin>`. New `--format`
+  skips detection.
+  **A bool leaf printed its type, never its value.** Bools now carry an
+  example like every other scalar: `--path a.LoginPriv` prints
+  `root: bool  e.g. true`, and a parent object shows each flag's value.
+  **YAML `yes`/`off`/`TRUE` were strings**, by a hand-kept list of bool
+  spellings. PyYAML's resolver now types every plain scalar, so the schema
+  agrees with `yaml.safe_load` (also `0x1F` is an int and dates are
+  `datetime`), and `--raw` returns `false` for `off`.
+  **Malformed YAML, an over-long CSV cell or an unreadable file
+  tracebacked** with exit 1. They are now `structo:` lines with exit 2,
+  and a CSV cell of any length is read.
+  **A one-line JSON array sniffed as TOML** (`["alpha"]` is a valid
+  table header), and an empty extensionless file as JSON (`"" in "{["`).
+  **Log templates called long decimal ids `<hex>`**; a hex run now needs
+  an a-f letter. 11 new tests (87 total).
 - 2026-09-24: v0.6.1 - a UTF-8 byte-order mark no longer corrupts data,
   silently. Every text read decoded as plain utf-8, so the BOM that Excel's
   "CSV UTF-8" and PowerShell 5's `Out-File` write stayed glued to the first

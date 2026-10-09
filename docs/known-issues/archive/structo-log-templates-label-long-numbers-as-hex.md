@@ -1,6 +1,8 @@
 # structo log templates label 8+ digit numbers as `<hex>`
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session. Minor.
+**RESOLVED 2026-10-09 (structo v0.7.0).** `<hex>` needs an a-f letter.
+
+Filed 2026-10-08 from a full-suite review session. Minor.
 
 ## What broke
 

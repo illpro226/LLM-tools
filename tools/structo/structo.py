@@ -37,9 +37,11 @@ import itertools
 import json
 import os
 import re
+import shutil
 import sys
+import tempfile
 
-__version__ = "0.6.1"
+__version__ = "0.7.0"
 
 DEFAULT_SAMPLE = 10
 # ADR-006: schema output is capped by default; --select/--raw are not.
@@ -277,8 +279,13 @@ def toml_value(path):
         raise StructoError("%s is not valid toml: %s" % (path, exc))
 
 
-_YAML_INT = re.compile(r"^[+-]?\d+$")
-_YAML_FLOAT = re.compile(r"^[+-]?(\d+\.\d*|\.\d+|\d+)([eE][+-]?\d+)?$")
+_YAML_KINDS = {
+    "tag:yaml.org,2002:null": "null",
+    "tag:yaml.org,2002:bool": "bool",
+    "tag:yaml.org,2002:int": "int",
+    "tag:yaml.org,2002:float": "float",
+    "tag:yaml.org,2002:timestamp": "datetime",   # as TOML dates are
+}
 
 
 def yaml_events(fh):
@@ -287,9 +294,18 @@ def yaml_events(fh):
     except ImportError:
         raise StructoError("yaml support needs PyYAML "
                            "(pip install pyyaml)")
+    try:
+        yield from _yaml_events(yaml, yaml.parse(fh))
+    except yaml.YAMLError as exc:
+        # One line, like the xml parse error; a traceback exited 1.
+        raise StructoError("not valid yaml: %s" % " ".join(str(exc).split()))
+
+
+def _yaml_events(yaml, parsed):
+    resolver = yaml.resolver.Resolver()
     stack = []
     expect_key = False
-    for ev in yaml.parse(fh):
+    for ev in parsed:
         if isinstance(ev, yaml.MappingStartEvent):
             yield ("{",)
             stack.append("o")
@@ -311,19 +327,15 @@ def yaml_events(fh):
             if isinstance(ev, yaml.AliasEvent):
                 kind, text = "alias", "*" + (ev.anchor or "")
             else:
+                # PyYAML's own resolver types the scalar, so the schema
+                # agrees with what yaml.safe_load hands a consumer: `yes`,
+                # `off` and `TRUE` are bools, `0x1F` an int, `2026-10-09` a
+                # date. A hand-kept list here called those strings. A
+                # quoted or block scalar resolves to str via `implicit`.
                 text = ev.value
-                if ev.style:                      # quoted/block: a string
-                    kind = "str"
-                elif text in ("", "~", "null", "Null", "NULL"):
-                    kind = "null"
-                elif text in ("true", "false", "True", "False"):
-                    kind = "bool"
-                elif _YAML_INT.match(text):
-                    kind = "int"
-                elif _YAML_FLOAT.match(text):
-                    kind = "float"
-                else:
-                    kind = "str"
+                tag = ev.tag if ev.tag not in (None, "!") else \
+                    resolver.resolve(yaml.ScalarNode, text, ev.implicit)
+                kind = _YAML_KINDS.get(tag, "str")
             if stack and stack[-1] == "o" and expect_key:
                 yield ("key", text)
                 expect_key = False
@@ -349,6 +361,11 @@ def _merge_scalar(node, kind, text):
                             + ("…" if len(text) > EXAMPLE_CAP else ""))
     elif kind in ("int", "float", "datetime"):
         example = text
+    elif kind == "bool":
+        # The type alone says nothing about a flag: `--path a.LoginPriv`
+        # printed `root: bool` and never the value. YAML's `yes`/`off`
+        # spellings are shown as the true/false a loader returns.
+        example = "true" if _scalar_value("bool", text) else "false"
     else:
         return
     if example not in node["examples"] \
@@ -628,7 +645,9 @@ _TS_FORMATS = (
 )
 _UUID_RX = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
                       r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
-_HEX_RX = re.compile(r"\b[0-9a-f]{8,}\b")
+# At least one a-f letter: a run of 8+ plain digits (a date, an epoch, an
+# order number) is a number, and used to template as `<hex>`.
+_HEX_RX = re.compile(r"\b(?=[0-9a-f]*[a-f])[0-9a-f]{8,}\b")
 _NUM_RX = re.compile(r"\b\d+(?:\.\d+)?\b")
 _QUOTED_RX = re.compile(r"\"[^\"]*\"|'[^']*'")
 
@@ -795,12 +814,24 @@ def detect(path):
                            % path)
     text = head.decode(TEXT_ENCODING, "replace")
     stripped = text.lstrip()
+    if not stripped:
+        # `"" in "{["` is True, so an empty file used to sniff as JSON.
+        raise StructoError("%s is empty; no structure to report" % path)
     lines = [l for l in text.splitlines() if l.strip()]
     if stripped.startswith("<"):
         return "xml", "sniffed"
-    if _looks_toml(lines):
+    # `["alpha"]` and `[1]` are valid TOML table headers too; a first line
+    # that parses as JSON is JSON.
+    first_is_json = False
+    if stripped[0] == "[":
+        try:
+            json.loads(lines[0])
+            first_is_json = True
+        except ValueError:
+            pass
+    if not first_is_json and _looks_toml(lines):
         return "toml", "sniffed"
-    if stripped[:1] in "{[":
+    if stripped[0] in "{[":
         if len(lines) >= 2:
             try:
                 json.loads(lines[0])
@@ -863,17 +894,22 @@ _MISSING = object()
 
 def _scalar_value(kind, text):
     if kind == "int":
-        try:
-            return int(text)
-        except ValueError:
-            return text
+        for base in (10, 0):        # 0: YAML's 0x1F / 0o17 / 0b101
+            try:
+                return int(text.replace("_", ""), base)
+            except ValueError:
+                pass
+        return text
     if kind == "float":
+        special = {".inf": "inf", "+.inf": "inf", "-.inf": "-inf",
+                   ".nan": "nan"}.get(text.lower())
         try:
-            return float(text)
+            return float(special or text.replace("_", ""))
         except ValueError:
             return text
     if kind == "bool":
-        return text.lower() == "true"
+        # YAML 1.1 spells true as yes/on as well, in any of three cases
+        return text.lower() in ("true", "yes", "on")
     if kind == "null":
         return None
     return text
@@ -1241,7 +1277,11 @@ def main(argv=None):
         prog="structo",
         description="print the schema and shape of a data file "
                     "instead of its content")
-    parser.add_argument("file", metavar="FILE")
+    parser.add_argument("file", metavar="FILE", nargs="?", default=None,
+                        help="the data file; `-` (or nothing, with input "
+                             "piped in) reads stdin")
+    parser.add_argument("--format", choices=sorted(set(EXT_FORMATS.values())),
+                        help="skip detection and read FILE as this format")
     parser.add_argument("--path", metavar="A.B[0].C",
                         help="zoom into a JSON/YAML/TOML subtree (a leading "
                              "[N] picks JSONL record N)")
@@ -1266,91 +1306,132 @@ def main(argv=None):
     parser.add_argument("--version", action="version",
                         version="structo %s" % __version__)
     args = parser.parse_args(argv)
+    if args.file is None:
+        if sys.stdin is None or sys.stdin.isatty():
+            parser.error("FILE is required (or pipe input and pass -)")
+        args.file = "-"
+    # A long CSV cell is still one cell; the 128 KiB default refused the
+    # whole file with a traceback. (2**31-1: sys.maxsize overflows a C long
+    # on Windows.)
+    csv.field_size_limit(2 ** 31 - 1)
 
+    stdin_dir = None
+    shown = args.file
     try:
-        if not os.path.isfile(args.file):
-            raise StructoError("not a file: %s" % args.file)
-        fmt, how = detect(args.file)
-        if fmt == "toml" and how == "sniffed":
-            # The first-line sniff also matches ini/conf files, which tomllib
-            # rejects. A sniff is a guess, so back off to the generic log
-            # summary rather than failing on a file we were only guessing
-            # about; an explicit .toml still reports the parse error.
-            try:
-                toml_value(args.file)
-            except StructoError:
-                fmt = "log"
-        target = None
-        if args.path:
-            if fmt not in TREE_FORMATS:
-                raise StructoError("--path zooms into json/yaml/jsonl/toml "
-                                   "(%s detected as %s)" % (args.file, fmt))
-            target = parse_path(args.path)
-            check_negatives(target, fmt)
-        if args.max_tokens is None:
-            # ADR-006: the schema digest is capped by default, but --select
-            # and --raw feed other programs and refuse rather than truncate
-            # (see below). Defaulting those to a budget would turn an
-            # ordinary `structo --select ... | awk` into an error, so an
-            # unset cap means unbounded there and only there.
-            args.max_tokens = (0 if (args.select or args.raw)
-                               else DEFAULT_MAX_TOKENS)
-        budget = max(0, args.max_tokens)
-        if args.select:
-            if args.raw:
-                raise StructoError("--select and --raw print different "
-                                   "things; pick one")
-            if fmt == "jsonl" and target is not None:
-                raise StructoError(
-                    "--select reads every jsonl line as a record; address "
-                    'into each one with the field names (--select "a.b")')
-            fields = parse_select(args.select)
-            if budget:
-                # Two passes rather than buffering: a projection that
-                # silently dropped records would corrupt whatever the
-                # caller sums downstream, so measure first, then refuse.
-                size, rows = 0, -1
-                for line in select_rows(args.file, fmt, target, fields):
-                    size += len(line.encode("utf-8", "replace")) + 1
-                    rows += 1
-                if size // 4 > budget:
-                    raise StructoError(
-                        "%d rows are ~%d tokens (budget %d); --select never "
-                        "drops records — pipe it to awk/sort rather than "
-                        "reading it" % (rows, size // 4, budget))
-            _relax_stdout(newline="\n")
-            for line in select_rows(args.file, fmt, target, fields):
-                print(line)
-            return 0
-        if args.raw:
-            if target is None:
-                raise StructoError("--raw needs --path")
-            value = extract_raw(args.file, fmt, target)
-            if isinstance(value, str):
-                text = value
-            elif isinstance(value, (datetime.date, datetime.time)):
-                text = value.isoformat()   # a TOML date is a value, not JSON
-            else:
-                text = json.dumps(value, ensure_ascii=False, indent=2,
-                                  default=str)
-            if budget and _est(text.splitlines()) > budget:
-                raise StructoError(
-                    "value at %s is ~%d tokens (budget %d); --raw never "
-                    "truncates — narrow the path or drop --max-tokens"
-                    % (args.path, _est(text.splitlines()), budget))
-            lines = [text]
-        else:
-            extra, levels = summarize(args.file, fmt, max(1, args.sample),
-                                      target)
-            header = "structo %s — format: %s (%s)%s" % (args.file, fmt,
-                                                         how, extra)
-            if target is not None:
-                header += ", path %s" % args.path
-            wrapped = [lambda lv=lv: [header, ""] + lv() for lv in levels]
-            lines = fit(wrapped, budget)
+        if args.file == "-":
+            # Every reader here streams from a path, often twice (measure,
+            # then print), so piped input is spooled to a private temp file
+            # rather than threading a second input type through all of them.
+            stdin_dir = tempfile.mkdtemp(prefix="structo-")
+            args.file = os.path.join(stdin_dir, "stdin")
+            shown = "<stdin>"
+            with open(args.file, "wb") as fh:
+                shutil.copyfileobj(sys.stdin.buffer, fh)
+        return _run(args, shown)
     except StructoError as exc:
-        print("structo: %s" % exc, file=sys.stderr)
+        msg = str(exc)
+        if stdin_dir:
+            msg = msg.replace(args.file, shown)
+        print("structo: %s" % msg, file=sys.stderr)
         return 2
+    except csv.Error as exc:
+        print("structo: %s: not valid csv: %s" % (shown, exc),
+              file=sys.stderr)
+        return 2
+    except OSError as exc:
+        print("structo: cannot read %s: %s" % (shown, exc.strerror or exc),
+              file=sys.stderr)
+        return 2
+    finally:
+        if stdin_dir:
+            shutil.rmtree(stdin_dir, ignore_errors=True)
+
+
+def _run(args, shown):
+    """main() after the input is a real file: one exit path per mode."""
+    if not os.path.isfile(args.file):
+        raise StructoError("not a file: %s" % args.file)
+    if args.format:
+        fmt, how = args.format, "--format"
+    else:
+        fmt, how = detect(args.file)
+    if fmt == "toml" and how == "sniffed":
+        # The first-line sniff also matches ini/conf files, which tomllib
+        # rejects. A sniff is a guess, so back off to the generic log
+        # summary rather than failing on a file we were only guessing
+        # about; an explicit .toml still reports the parse error.
+        try:
+            toml_value(args.file)
+        except StructoError:
+            fmt = "log"
+    target = None
+    if args.path:
+        if fmt not in TREE_FORMATS:
+            raise StructoError("--path zooms into json/yaml/jsonl/toml "
+                               "(%s detected as %s)" % (args.file, fmt))
+        target = parse_path(args.path)
+        check_negatives(target, fmt)
+    if args.max_tokens is None:
+        # ADR-006: the schema digest is capped by default, but --select
+        # and --raw feed other programs and refuse rather than truncate
+        # (see below). Defaulting those to a budget would turn an
+        # ordinary `structo --select ... | awk` into an error, so an
+        # unset cap means unbounded there and only there.
+        args.max_tokens = (0 if (args.select or args.raw)
+                           else DEFAULT_MAX_TOKENS)
+    budget = max(0, args.max_tokens)
+    if args.select:
+        if args.raw:
+            raise StructoError("--select and --raw print different "
+                               "things; pick one")
+        if fmt == "jsonl" and target is not None:
+            raise StructoError(
+                "--select reads every jsonl line as a record; address "
+                'into each one with the field names (--select "a.b")')
+        fields = parse_select(args.select)
+        if budget:
+            # Two passes rather than buffering: a projection that
+            # silently dropped records would corrupt whatever the
+            # caller sums downstream, so measure first, then refuse.
+            size, rows = 0, -1
+            for line in select_rows(args.file, fmt, target, fields):
+                size += len(line.encode("utf-8", "replace")) + 1
+                rows += 1
+            if size // 4 > budget:
+                raise StructoError(
+                    "%d rows are ~%d tokens (budget %d); --select never "
+                    "drops records — pipe it to awk/sort rather than "
+                    "reading it" % (rows, size // 4, budget))
+        _relax_stdout(newline="\n")
+        for line in select_rows(args.file, fmt, target, fields):
+            print(line)
+        return 0
+    if args.raw:
+        if target is None:
+            raise StructoError("--raw needs --path")
+        value = extract_raw(args.file, fmt, target)
+        if isinstance(value, str):
+            text = value
+        elif isinstance(value, (datetime.date, datetime.time)):
+            text = value.isoformat()   # a TOML date is a value, not JSON
+        else:
+            text = json.dumps(value, ensure_ascii=False, indent=2,
+                              default=str)
+        if budget and _est(text.splitlines()) > budget:
+            raise StructoError(
+                "value at %s is ~%d tokens (budget %d); --raw never "
+                "truncates — narrow the path or drop --max-tokens"
+                % (args.path, _est(text.splitlines()), budget))
+        lines = [text]
+    else:
+        extra, levels = summarize(args.file, fmt, max(1, args.sample),
+                                  target)
+        header = "structo %s — format: %s (%s)%s" % (shown, fmt,
+                                                     how, extra)
+        if target is not None:
+            header += ", path %s" % args.path
+        wrapped = [lambda lv=lv: [header, ""] + lv() for lv in levels]
+        lines = fit(wrapped, budget)
 
     _relax_stdout()
     print("\n".join(lines))
