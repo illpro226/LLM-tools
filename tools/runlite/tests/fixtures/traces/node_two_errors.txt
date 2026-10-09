@@ -1,0 +1,6 @@
+TypeError: first failure
+    at handle (/app/src/a.js:3:9)
+    at main (/app/src/index.js:10:1)
+[info] retrying request
+RangeError: second failure
+    at grow (/app/src/b.js:7:5)

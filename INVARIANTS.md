@@ -17,7 +17,7 @@ decision record in `docs/decisions/`, not just a PR.
 - Every tool whose output can grow respects `--max-tokens N`, degrading by
   summarizing harder — never by truncating mid-thought.
 - **The budget is on by default, and every rung is bounded**
-  (docs/decisions/0005). A tool whose purpose is keeping bulk out of a
+  (docs/decisions/0005, 0011). A tool whose purpose is keeping bulk out of a
   context window must not emit bulk unless asked twice: opt-in caps were
   passed on 1.4% of real calls. A ladder must also actually *terminate* in
   something small — a rung that is still O(input), like one line per

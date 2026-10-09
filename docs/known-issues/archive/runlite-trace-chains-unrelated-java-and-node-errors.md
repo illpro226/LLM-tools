@@ -1,6 +1,8 @@
 # runlite trace chains unrelated Java and Node errors as "caused by"
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session.
+**RESOLVED 2026-10-09 (runlite v0.6.0).** Java chains only on `Caused by:`/`Suppressed:`, Node only on `[cause]:` (real node 22 format, with its ` {` and elision lines).
+
+Filed 2026-10-08 from a full-suite review session.
 
 ## What broke
 

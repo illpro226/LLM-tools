@@ -1,6 +1,8 @@
 # runlite's default output is unbounded and can exceed the log it replaces
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session.
+**RESOLVED 2026-10-09 (runlite v0.6.0, tokq v0.2.0).** Both default to `--max-tokens 2000` (docs/decisions/0011, superseding 0005's exemption for them). The 3,000-warning run now prints 8,220 bytes.
+
+Filed 2026-10-08 from a full-suite review session.
 
 ## What broke
 

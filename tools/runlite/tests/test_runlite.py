@@ -404,3 +404,36 @@ def test_unwritable_full_log_keeps_the_report_and_exit_code(tmp_path,
     assert out.startswith("# runlite: exit 4 in ")
     assert "# raw log: NOT written to %s (" % dest in out
     assert "could not write --full-log" in err
+
+
+# ------------------------------------------------ v0.6.0 review fixes
+
+def test_generic_reports_no_problems_on_exit_0():
+    """`0 errors` and `error handling` were "2 problems" under exit 0."""
+    log_text = ("compiled 12 files, 0 errors, 0 warnings\n"
+                "error handling module loaded\n"
+                "warning: cache dir missing\n")
+    problems, tail = runlite.parse_generic(log_text)
+    lines = runlite.render(0, 0.1, "generic", problems, tail, 0, "")
+    assert lines[0].endswith("no problems")
+    assert "# note: 1 log line mentions a warning" in lines
+
+
+def test_language_extractor_still_drops_only_failures_on_exit_0():
+    p = [runlite._problem("FAIL test_a", "t.py:1"),
+         runlite._problem("warning: slow", "t.py:2")]
+    lines = runlite.render(0, 0.1, "pytest", p, [], 0, "")
+    assert "1 problem" in lines[0]
+
+
+def test_default_budget_bounds_a_noisy_failing_run(capsys):
+    """docs/decisions/0011: 3000 warning lines made a report larger than
+    the log it replaced, because the default was unbounded."""
+    script = ("import sys\n"
+              "for n in range(3000):\n"
+              "    print('warning: thing %d is deprecated' % n)\n"
+              "sys.exit(1)\n")
+    code, out, _ = run(["--", sys.executable, "-c", script], capsys)
+    assert code == 1
+    assert len(out) // 4 <= runlite.DEFAULT_MAX_TOKENS
+    assert "for --max-tokens 2000" in out

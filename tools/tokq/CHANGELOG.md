@@ -1,5 +1,10 @@
 # tokq Changelog
 
+- 2026-10-09: v0.2.0 — `--max-tokens` defaults to 2000
+  (docs/decisions/0011). Metering 400 files printed 400 rows; now the rows
+  past the budget are elided and counted, and the total still prints.
+  `--max-tokens 0` restores unbounded output. Small runs are
+  byte-identical. 2 new tests (32 total).
 - 2026-09-24: v0.1.2 — fixes from a suite review, each pinned by a test
   that fails on v0.1.1. **`--max-tokens` cut the summary.** Output was
   truncated from the end, which is where the total, the finding count and

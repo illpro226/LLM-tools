@@ -1,5 +1,25 @@
 # runlite Changelog
 
+- 2026-10-09: v0.6.0 — fixes for four known issues from the 2026-10-08
+  review, each pinned by a test that fails on v0.5.0.
+  **The default was unbounded, and a report could outgrow its log.** 3,000
+  warning lines and exit 1 made a 104,702-byte report from a 103,890-byte
+  log. `--max-tokens` now defaults to 2000 for both the runner and `trace`
+  (docs/decisions/0011); the same run prints 8,220 bytes. `0` is still
+  unbounded.
+  **`trace` chained unrelated Java and Node errors**, the second labeled
+  "caused by" the first. Python got this fix in v0.5.0; Java now chains
+  only on `Caused by:`/`Suppressed:` and Node only on `[cause]:`. Node's
+  real cause format also needed the ` {` ending a frame line and the
+  `... N lines matching cause stack trace ...` elision.
+  **Exception groups were "no recognized stack trace".** Every line of
+  an `ExceptionGroup` traceback sits behind a `| ` border. Groups now
+  parse, nested ones included, with each sub-exception a section of kind
+  `in group`. A never-raised member (only its exception line) is kept.
+  **The generic extractor reported problems on a passing run**:
+  `0 errors` and `error handling` were "2 problems" under exit 0. On exit
+  0 it now reports no problems and a count of lines mentioning a warning.
+  9 new tests (91 total).
 - 2026-09-24: v0.5.0 — fixes from a suite review, each pinned by a test
   that fails on v0.4.0.
   **`trace` invented causal chains.** Every Python traceback in the input

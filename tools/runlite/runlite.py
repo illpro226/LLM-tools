@@ -35,13 +35,15 @@ import subprocess
 import sys
 import time
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 EXIT_INTERNAL = 125   # runlite's own failure, never the wrapped command's
 EXIT_NOT_FOUND = 127
 EXIT_NO_TRACE = 1     # `trace` only: input held no recognizable stack trace
 
 TAIL_LINES = 20       # generic fallback keeps this many trailing lines
+# docs/decisions/0011: a failure report was not bounded by construction.
+DEFAULT_MAX_TOKENS = 2000
 MAX_CONTEXT = 6       # cc extractor: context lines kept per diagnostic
 
 # Loose path:line matcher for attaching references to free-form lines.
@@ -441,12 +443,21 @@ def _block(p):
 # How every extractor labels a test that failed. On a run that exited 0 no
 # test failed, so such a finding is an extractor misfire by construction.
 _FAILURE_TITLE = re.compile(r"^FAIL(?:ED)?\b")
+# "warning" but not "0 warnings" / "no warnings".
+_WARNISH = re.compile(r"(?<!\b0 )(?<!\bno )\bwarn(?:ing)?s?\b", re.I)
 
 
 def render(exit_code, wall, ext_name, problems, tail, max_tokens, log_path,
            log_bytes=None, log_error=None):
-    dropped = 0
-    if exit_code == 0:
+    dropped, warned = 0, 0
+    if exit_code == 0 and ext_name == "generic":
+        # The generic extractor keeps any line with a keyword in it, so on
+        # a pass "compiled 12 files, 0 errors" and "error handling module
+        # loaded" became "2 problems". It owns no output format; on exit 0
+        # all it can honestly say is how many lines mentioned a warning.
+        warned = sum(1 for p in problems if _WARNISH.search(p["title"]))
+        problems = []
+    elif exit_code == 0:
         # The exit code is the reliable signal; a "1 problem / FAIL" body
         # under an `exit 0` headline is read as the detail and reported to
         # the user as a failing build.
@@ -474,6 +485,9 @@ def render(exit_code, wall, ext_name, problems, tail, max_tokens, log_path,
                       "exited 0, so nothing failed (the %s extractor matched "
                       "output it does not own)"
                       % (dropped, "s"[: dropped != 1], ext_name))
+    if warned:
+        header.append("# note: %d log line%s mention%s a warning"
+                      % (warned, "s"[: warned != 1], "s"[: warned == 1]))
     if log_error:
         header.append("# raw log: NOT written to %s (%s)" % log_error)
     elif log_path:
@@ -636,6 +650,64 @@ _PY_START = re.compile(r"^Traceback \(most recent call last\):\s*$")
 _PY_FRAME = re.compile(r'^\s+File "(.+?)", line (\d+)(?:, in (.+?))?\s*$')
 _PY_DURING = "During handling of the above exception"
 _PY_CAUSE = "The above exception was the direct cause"
+# Exception groups (3.11+: asyncio.TaskGroup, trio, anyio) are drawn in a
+# box: `  + Exception Group Traceback ...`, `  | ` before every line, and
+# `+-+---- 1 ----` / `+---- 2 ----` / `+------` between the sub-exceptions.
+_PY_GROUP_START = re.compile(
+    r"^( *)\+ Exception Group Traceback \(most recent call last\):\s*$")
+_PY_GROUP_INNER = "Exception Group Traceback (most recent call last):"
+_PY_GROUP_SEP = re.compile(r"^\+-{3,}(?: (?:\d+|\.\.\.) -+)?\s*$")
+
+
+def _py_block(lines, i):
+    """(frames innermost-first, exception line, end index) for the
+    traceback whose `Traceback ...` line is lines[i]."""
+    frames = []
+    j = i + 1
+    while j < len(lines):
+        m = _PY_FRAME.match(lines[j])
+        if m:
+            frames.append(_frame(m.group(1), m.group(2), m.group(3)))
+        elif lines[j].strip() and not lines[j][:1].isspace():
+            break  # unindented: the exception line ends the block
+        j += 1
+    header = lines[j].strip() if j < len(lines) else "(no exception line)"
+    # Python prints outermost-first; lead with the failure site.
+    frames.reverse()
+    return frames, header, j
+
+
+def _py_group(lines):
+    """(frames, header, member sections) for one exception group.
+
+    `lines` has the group's outer border stripped: its own traceback is
+    plain text, and each sub-exception is a run of lines behind a `| `
+    border, opened by `+---- N ----`. Stripping two columns from a member
+    gives the same shape again, so a nested group is the same call.
+    """
+    frames, header, j = _py_block(lines, 0)
+    members, cur = [], None
+    for line in lines[j + 1:]:
+        if _PY_GROUP_SEP.match(line):
+            cur = []
+            members.append(cur)
+        elif cur is not None:
+            cur.append(line[2:])
+    sections = []
+    for member in members:
+        if member and member[0].strip() == _PY_GROUP_INNER:
+            f, h, sub = _py_group(member)
+            secs = [_section("raised", h, f)] + sub
+        else:
+            secs = [s for t in parse_python_trace("\n".join(member))
+                    for s in t["sections"]]
+            text = [l.strip() for l in member if l.strip()]
+            if not secs and text:  # never raised: only its exception line
+                secs = [_section("in group", text[0], [])]
+        if secs:
+            secs[0]["kind"] = "in group"
+        sections.extend(secs)
+    return frames, header, sections
 
 
 def parse_python_trace(text):
@@ -643,25 +715,26 @@ def parse_python_trace(text):
     chains, pending = [], None   # pending: a relation marker since the last
     i = 0                        # block, or None
     while i < len(lines):
+        group = _PY_GROUP_START.match(lines[i])
         if _PY_DURING in lines[i]:
             pending = "during handling of"
         elif _PY_CAUSE in lines[i]:
             pending = "direct cause of"
-        elif _PY_START.match(lines[i]):
-            frames = []
-            j = i + 1
-            while j < len(lines):
-                m = _PY_FRAME.match(lines[j])
-                if m:
-                    frames.append(_frame(m.group(1), m.group(2), m.group(3)))
-                elif lines[j].strip() and not lines[j][:1].isspace():
-                    break  # unindented: the exception line ends the block
-                j += 1
-            header = lines[j].strip() if j < len(lines) else "(no exception line)"
-            # Python prints outermost-first; lead with the failure site.
-            frames.reverse()
+        elif group or _PY_START.match(lines[i]):
+            members = []
+            if group:
+                col = len(group.group(1))
+                j = i + 1
+                while j < len(lines) and lines[j][:col].strip() == "" and \
+                        lines[j][col:].lstrip()[:1] in ("+", "|"):
+                    j += 1
+                frames, header, members = _py_group(
+                    [l[col + 2:] for l in lines[i:j]])
+                j -= 1
+            else:
+                frames, header, j = _py_block(lines, i)
             block = {"kind": pending or "raised", "header": header,
-                     "frames": frames}
+                     "frames": frames, "members": members}
             if pending and chains:
                 chains[-1].append(block)
             else:
@@ -687,9 +760,11 @@ def parse_python_trace(text):
             blocks[k]["kind"] = kinds[k + 1]
         blocks[-1]["kind"] = "raised"
         blocks.reverse()
-        traces.append({"lang": "python",
-                       "sections": [_section(b["kind"], b["header"],
-                                             b["frames"]) for b in blocks]})
+        sections = []
+        for b in blocks:
+            sections.append(_section(b["kind"], b["header"], b["frames"]))
+            sections.extend(b["members"])  # a group's sub-exceptions
+        traces.append({"lang": "python", "sections": sections})
     return traces
 
 
@@ -709,7 +784,7 @@ _JAVA_ELIDED = re.compile(r"^\s+\.\.\. \d+ (?:more|common frames omitted)\s*$")
 
 def parse_java_trace(text):
     lines = text.splitlines()
-    sections = []
+    traces = []
     i = 0
     while i < len(lines):
         head, kind = None, None
@@ -726,8 +801,7 @@ def parse_java_trace(text):
                 if m and i + 1 < len(lines) and (
                         _JAVA_FRAME.match(lines[i + 1])
                         or _JAVA_FRAME_NOSRC.match(lines[i + 1])):
-                    head = m.group(1)
-                    kind = "raised" if not sections else "caused by"
+                    head, kind = m.group(1), "raised"
         if head is None:
             i += 1
             continue
@@ -743,23 +817,29 @@ def parse_java_trace(text):
                 break
             j += 1
         # JVM frames are already innermost-first, as are Caused-by chains.
-        sections.append(_section(kind, head, frames))
+        # Only `Caused by:`/`Suppressed:` continue a chain. A new header is
+        # a separate failure: two exceptions from different threads used
+        # to fold into one trace, the later one labeled "caused by".
+        if kind == "raised" or not traces:
+            traces.append({"lang": "java", "sections": []})
+        traces[-1]["sections"].append(_section(kind, head, frames))
         i = j
-    if not sections:
-        return []
-    return [{"lang": "java", "sections": sections}]
+    return traces
 
 
 # ---- node / javascript
 
+# A trailing ` {` opens the property block of an error that has a cause.
 _JS_FRAME = re.compile(
-    r"^\s+at (?:(?:new |async )?(.+?) \()?([^()]+?):(\d+):\d+\)?\s*$")
+    r"^\s+at (?:(?:new |async )?(.+?) \()?([^()]+?):(\d+):\d+\)?\s*\{?\s*$")
+_JS_ELIDED = re.compile(r"^\s+\.\.\. \d+ lines? matching cause stack trace")
 _JS_HEAD = re.compile(r"^\s*(?:Uncaught )?([\w$.]*(?:Error|Exception)\b.*)$")
+_JS_CAUSE = re.compile(r"^\s*\[cause\]:\s*(.*)$")
 
 
 def parse_node_trace(text):
     lines = text.splitlines()
-    sections = []
+    traces = []
     i = 0
     while i < len(lines):
         if not _JS_FRAME.match(lines[i]):
@@ -769,29 +849,33 @@ def parse_node_trace(text):
         # precedes it with a source echo and a caret line; those never
         # match _JS_HEAD, so an unrecognizable header degrades to a label
         # rather than to a source line masquerading as one.
-        head = "(unlabeled stack)"
+        head, cause = "(unlabeled stack)", False
         k = i - 1
         while k >= 0 and not lines[k].strip():
             k -= 1
         if k >= 0:
-            m = _JS_HEAD.match(lines[k])
+            c = _JS_CAUSE.match(lines[k])
+            cause = bool(c)
+            m = _JS_HEAD.match(c.group(1) if c else lines[k])
             if m:
                 head = m.group(1).strip()
         frames = []
         j = i
         while j < len(lines):
             f = _JS_FRAME.match(lines[j])
-            if not f:
+            if f:
+                frames.append(_frame(f.group(2), f.group(3), f.group(1)))
+            elif not _JS_ELIDED.match(lines[j]):
                 break
-            frames.append(_frame(f.group(2), f.group(3), f.group(1)))
             j += 1
-        # V8 prints innermost-first already.
-        sections.append(_section("raised" if not sections else "caused by",
-                                 head, frames))
+        # V8 prints innermost-first already. Only a `[cause]:` header
+        # continues a chain; any other stack is a separate failure.
+        if not cause or not traces:
+            traces.append({"lang": "node", "sections": []})
+        traces[-1]["sections"].append(_section(
+            "caused by" if cause else "raised", head, frames))
         i = j
-    if not sections:
-        return []
-    return [{"lang": "node", "sections": sections}]
+    return traces
 
 
 # ---- go
@@ -893,7 +977,8 @@ def parse_rust_trace(text):
 
 
 TRACE_PARSERS = [
-    ("python", re.compile(r"^Traceback \(most recent call last\):\s*$", re.M),
+    ("python", re.compile(r"^(?: *\+ Exception Group )?Traceback "
+                          r"\(most recent call last\):\s*$", re.M),
      parse_python_trace),
     ("rust", re.compile(r"^thread '.+?' panicked at ", re.M),
      parse_rust_trace),
@@ -1111,8 +1196,11 @@ def main_trace(argv):
         usage="runlite trace [options] [FILE]")
     parser.add_argument("path", nargs="?", default="-", metavar="FILE",
                         help="trace file, or - / omitted for stdin")
-    parser.add_argument("--max-tokens", type=int, metavar="N", default=0,
-                        help="over budget: first trace full, rest one line")
+    parser.add_argument("--max-tokens", type=int, metavar="N",
+                        default=DEFAULT_MAX_TOKENS,
+                        help="over budget: first trace full, rest one line "
+                             "(default: %d, 0 = unbounded)"
+                             % DEFAULT_MAX_TOKENS)
     parser.add_argument("--all-frames", action="store_true",
                         help="do not collapse runs of library frames")
     args = parser.parse_args(argv)
@@ -1189,8 +1277,11 @@ def main(argv=None):
         prog="runlite",
         description="run a command and print a failure-focused report",
         usage="runlite [options] -- CMD [ARGS...]")
-    parser.add_argument("--max-tokens", type=int, metavar="N", default=0,
-                        help="over budget: first problem full, rest one line")
+    parser.add_argument("--max-tokens", type=int, metavar="N",
+                        default=DEFAULT_MAX_TOKENS,
+                        help="over budget: first problem full, rest one line "
+                             "(default: %d, 0 = unbounded)"
+                             % DEFAULT_MAX_TOKENS)
     parser.add_argument("--full-log", metavar="PATH", default="",
                         help="also write the raw log to PATH and print it")
     parser.add_argument("--version", action="version",

@@ -390,3 +390,72 @@ def test_unrelated_python_tracebacks_are_separate_traces():
     _, chained = runlite.detect_traces(
         UNRELATED + trace_text("python_chained.txt"))
     assert len(chained) == 3 and len(chained[2]["sections"]) > 1
+
+
+# ------------------------------------------------ v0.6.0 review fixes
+
+def test_java_unrelated_exceptions_are_separate_traces():
+    """A second `Exception in thread` header was labeled "caused by" the
+    first; only `Caused by:`/`Suppressed:` continue a chain."""
+    traces = runlite.parse_java_trace(trace_text("java_two_threads.txt"))
+    assert [len(t["sections"]) for t in traces] == [1, 1]
+    assert traces[1]["sections"][0]["kind"] == "raised"
+    assert traces[1]["sections"][0]["header"].endswith("NullPointerException: two")
+
+
+def test_java_caused_by_still_chains():
+    traces = runlite.parse_java_trace(trace_text("java_caused_by.txt"))
+    assert len(traces) == 1
+    assert [s["kind"] for s in traces[0]["sections"]] == ["raised",
+                                                          "caused by"]
+
+
+def test_node_unrelated_errors_are_separate_traces():
+    traces = runlite.parse_node_trace(trace_text("node_two_errors.txt"))
+    assert [t["sections"][0]["header"] for t in traces] == [
+        "TypeError: first failure", "RangeError: second failure"]
+    assert all(len(t["sections"]) == 1 for t in traces)
+
+
+def test_node_cause_block_chains():
+    """Real node 22 output: the `[cause]:` block, the ` {` that opens it,
+    and the `... N lines matching cause stack trace ...` elision."""
+    traces = runlite.parse_node_trace(trace_text("node_cause.txt"))
+    assert len(traces) == 1
+    secs = traces[0]["sections"]
+    assert [(s["kind"], s["header"]) for s in secs] == [
+        ("raised", "Error: outer"), ("caused by", "Error: inner")]
+    assert "node:internal/main/run_main_module:36" in [
+        f["ref"] for f in secs[0]["frames"]]
+
+
+def test_python_exception_group_members_are_sections():
+    """Real 3.14 output with a nested group, a never-raised member, and a
+    chained member. Each line sits behind a `| ` border, so nothing used
+    to match and the input read as 'no recognized stack trace'."""
+    lang, traces = runlite.detect_traces(
+        trace_text("python_exception_group.txt"))
+    assert lang == "python" and len(traces) == 1
+    got = [(s["kind"], s["header"]) for s in traces[0]["sections"]]
+    assert got == [
+        ("raised", "ExceptionGroup: outer (2 sub-exceptions)"),
+        ("in group", "ExceptionGroup: inner (1 sub-exception)"),
+        ("in group", "TypeError: t"),
+        ("in group", "RuntimeError: wrapped"),
+        ("direct cause of", "KeyError: 'k'"),
+    ]
+    secs = traces[0]["sections"]
+    assert secs[0]["frames"][0]["ref"] == "/app/src/jobs.py:16"
+    assert secs[4]["frames"][0]["ref"] == "/app/src/jobs.py:6"
+
+
+def test_trace_default_budget_is_on(capsys, tmp_path):
+    """docs/decisions/0011: `runlite trace` on a service log is O(traces)."""
+    one = trace_text("python_chained.txt")
+    path = tmp_path / "service.log"
+    path.write_text(one * 300, encoding="utf-8")
+    code = runlite.main(["trace", str(path)])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert len(out) // 4 <= runlite.DEFAULT_MAX_TOKENS
+    assert "--max-tokens 2000" in out

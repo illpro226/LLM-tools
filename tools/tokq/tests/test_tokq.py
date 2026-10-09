@@ -300,3 +300,21 @@ def test_walk_skips_a_file_that_cannot_be_statted(tmp_path, monkeypatch):
 
     monkeypatch.setattr(tokq.os.path, "getsize", flaky)
     assert [rel for rel, _ in tokq._walk(str(tmp_path))] == ["ok.txt"]
+
+
+def test_default_budget_is_on(tmp_path, capsys):
+    """docs/decisions/0011: metering 2000 files printed every row."""
+    paths = _many_files(tmp_path, n=2000, size=10)
+    code, out, _ = run(["--tokenizer", "heuristic"] + paths, capsys)
+    assert code == 0
+    assert len(out) // 4 <= 2000 + 50
+    assert "elided for --max-tokens 2000" in out
+    assert out.splitlines()[-1].endswith("total (2000 files)")
+
+
+def test_small_input_identical_with_and_without_default(tmp_path, capsys):
+    paths = _many_files(tmp_path, n=3, size=10)
+    _, default, _ = run(["--tokenizer", "heuristic"] + paths, capsys)
+    _, unbounded, _ = run(["--tokenizer", "heuristic", "--max-tokens", "0"]
+                          + paths, capsys)
+    assert default == unbounded

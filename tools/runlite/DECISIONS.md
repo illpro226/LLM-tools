@@ -92,3 +92,14 @@ Consequences: an explicit `--max-tokens` now holds for any log size (the
 default stays unbounded — docs/decisions/0005). Failure #1 keeps its place
 at the top; what is cut is always the tail of the list, and the raw log
 remains the escape hatch ADR-002 promised.
+
+## ADR-007: The budget is on by default — Accepted (2026-10-09)
+
+Context: ADR-006 made an explicit `--max-tokens` hold for any log, but the
+default stayed unbounded under docs/decisions/0005's exemption. 3,000
+warning lines and exit 1 produced a report larger than the log.
+Decision: `--max-tokens` defaults to 2000 for the runner and `trace`
+(docs/decisions/0011). `0` restores unbounded output.
+Consequences: ordinary reports are byte-identical. A noisy run now stops at
+ADR-006's rungs without a flag, and `--full-log PATH` stays the way to
+get every line.

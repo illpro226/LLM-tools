@@ -1,0 +1,7 @@
+2026-10-08 10:00:01 INFO  starting worker pool
+Exception in thread "worker-1" java.lang.IllegalStateException: one
+	at com.acme.A.run(A.java:10)
+	at com.acme.Main.main(Main.java:5)
+2026-10-08 10:00:02 INFO  retrying
+Exception in thread "worker-2" java.lang.NullPointerException: two
+	at com.acme.B.go(B.java:20)

@@ -1,6 +1,8 @@
 # runlite's generic extractor reports "problems" on a passing run
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session.
+**RESOLVED 2026-10-09 (runlite v0.6.0).** On exit 0 the generic extractor reports no problems, plus a count of lines mentioning a warning.
+
+Filed 2026-10-08 from a full-suite review session.
 
 ## What broke
 

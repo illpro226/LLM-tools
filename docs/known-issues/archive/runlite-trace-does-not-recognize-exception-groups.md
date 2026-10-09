@@ -1,6 +1,8 @@
 # runlite trace does not recognize Python exception groups
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session.
+**RESOLVED 2026-10-09 (runlite v0.6.0).** The border is stripped and each sub-exception becomes an `in group` section; nested groups and never-raised members are handled. Pinned by a real Python 3.14 fixture.
+
+Filed 2026-10-08 from a full-suite review session.
 
 ## What broke
 

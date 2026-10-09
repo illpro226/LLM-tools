@@ -1,0 +1,32 @@
+  + Exception Group Traceback (most recent call last):
+  |   File "/app/src/jobs.py", line 16, in <module>
+  |     raise ExceptionGroup("outer", errs)
+  | ExceptionGroup: outer (2 sub-exceptions)
+  +-+---------------- 1 ----------------
+    | Exception Group Traceback (most recent call last):
+    |   File "/app/src/jobs.py", line 13, in <module>
+    |     f()
+    |     ~^^
+    |   File "/app/src/jobs.py", line 2, in inner
+    |     raise ExceptionGroup("inner", [TypeError("t")])
+    | ExceptionGroup: inner (1 sub-exception)
+    +-+---------------- 1 ----------------
+      | TypeError: t
+      +------------------------------------
+    +---------------- 2 ----------------
+    | Traceback (most recent call last):
+    |   File "/app/src/jobs.py", line 6, in chained
+    |     {}["k"]
+    |     ~~^^^^^
+    | KeyError: 'k'
+    | 
+    | The above exception was the direct cause of the following exception:
+    | 
+    | Traceback (most recent call last):
+    |   File "/app/src/jobs.py", line 13, in <module>
+    |     f()
+    |     ~^^
+    |   File "/app/src/jobs.py", line 8, in chained
+    |     raise RuntimeError("wrapped") from e
+    | RuntimeError: wrapped
+    +------------------------------------

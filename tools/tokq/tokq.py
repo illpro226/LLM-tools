@@ -20,7 +20,9 @@ import argparse
 import os
 import sys
 
-__version__ = "0.1.2"
+__version__ = "0.2.0"
+# docs/decisions/0011: lint and multi-file output grow with the input.
+DEFAULT_MAX_TOKENS = 2000
 
 BYTES_PER_TOKEN = 3.7  # fallback heuristic divisor
 
@@ -404,8 +406,11 @@ def _add_common(parser):
     parser.add_argument("--tokenizer", choices=("auto", "tiktoken", "heuristic"),
                         default=os.environ.get("TOKQ_TOKENIZER", "auto"),
                         help="token counting method (default: auto)")
-    parser.add_argument("--max-tokens", type=int, metavar="N", default=0,
-                        help="cap tokq's own output at roughly N tokens")
+    parser.add_argument("--max-tokens", type=int, metavar="N",
+                        default=DEFAULT_MAX_TOKENS,
+                        help="cap tokq's own output at roughly N tokens "
+                             "(default: %d, 0 = unbounded)"
+                             % DEFAULT_MAX_TOKENS)
     parser.add_argument("--version", action="version",
                         version="tokq %s" % __version__)
 

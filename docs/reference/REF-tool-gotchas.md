@@ -36,13 +36,13 @@ tools test the same way from `archive/rq/` and `archive/testmap/`.
 
 ## Default token budgets
 
-Budgets are on by default (`docs/decisions/0005`); `--max-tokens 0` is the escape
+Budgets are on by default (`docs/decisions/0005`, `0011`); `--max-tokens 0` is the escape
 hatch.
 
 | tool | default `--max-tokens` |
 |---|---|
 | `sgrep` | 1500 |
-| `xread`, `structo`, `gitbrief` | 2000 |
+| `xread`, `structo`, `gitbrief`, `runlite`, `tokq` | 2000 |
 | `repomap`, `codediff` | 3000 |
 
 All tools are stdlib-only Python, single-file except `repoindex` (a package).
