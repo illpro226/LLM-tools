@@ -222,10 +222,11 @@ def test_query_blocks_are_whole_functions(capsys):
     assert len(body) == 1 + int(m.group(2)) - int(m.group(1)) + 1
 
 
-def test_query_no_hits_prints_nothing(capsys):
+def test_query_no_hits_says_so_and_exits_1(capsys):
+    """Was: empty stdout, exit 0 — indistinguishable from a broken tool."""
     code, out, _ = run([fx("sample.py"), "--query", "zzzznohit"], capsys)
-    assert code == 0
-    assert out == ""
+    assert code == 1
+    assert out.strip() == 'no blocks match "zzzznohit" in %s' % fx("sample.py")
 
 
 def test_query_markdown_blocks_tile_the_file():
@@ -727,3 +728,73 @@ def test_outline_over_budget_hides_nested_before_truncating(tmp_path, capsys):
     assert xread._tokens_of(tight) <= 60
     assert re.match(r"^\(… \d+ more outline entries elided for "
                     r"--max-tokens 60\)$", tight[-1])
+
+
+# ------------------------------------------------ v0.6.0 review fixes
+
+import pytest  # noqa: E402
+
+
+def ok(argv, capsys):
+    code, out, err = run(argv, capsys)
+    assert code == 0, err
+    return out
+
+
+@pytest.mark.parametrize("name,span", [
+    ("getVerseOfTheDay", (3, 7)),     # doc comment + cache(async () => {})
+    ("LIST_CONFIG", (9, 12)),         # typed object literal
+    ("ROTATION", (14, 18)),           # multi-line array under a doc comment
+    ("GRANTING_STATUSES", (20, 23)),  # new Set([...]) across lines
+])
+def test_ts_module_constants_resolve(name, span, capsys):
+    out = ok([fx("module_consts.ts"), "--symbol", name], capsys)
+    assert out.splitlines()[0] == "== %s:%d-%d ==" % (
+        fx("module_consts.ts"), span[0], span[1])
+
+
+def test_ts_locals_inside_a_function_are_not_symbols(capsys):
+    out = ok([fx("module_consts.ts"), "--headings"], capsys)
+    assert "local" not in out and "day" not in out
+    assert "constant ROTATION" in out or "ROTATION" in out
+
+
+def test_markdown_closing_hashes_are_not_the_name(tmp_path, capsys):
+    p = tmp_path / "doc.md"
+    p.write_text("# Title #\n\nintro\n\n## Usage ##\n\nrun it\n\n# C#\n",
+                 encoding="utf-8")
+    out = ok([str(p), "--symbol", "Usage"], capsys)
+    assert out.splitlines()[0].endswith(":5-8 ==")
+    heads = ok([str(p), "--headings"], capsys)
+    assert "## Usage" in heads and "Usage ##" not in heads
+    assert "# C#" in heads
+
+
+def test_headings_on_a_file_without_symbols_says_so(tmp_path, capsys):
+    p = tmp_path / "script.py"
+    p.write_text("print('hi')\n", encoding="utf-8")
+    out = ok([str(p), "--headings"], capsys)
+    assert out.strip() == "%s: no symbols (try --lines or --query)" % p
+
+
+def test_top_below_one_is_rejected(capsys):
+    with pytest.raises(SystemExit) as exc:
+        xread.main([fx("sample.py"), "--query", "return", "--top", "0"])
+    assert exc.value.code == 2
+    assert "--top must be at least 1" in capsys.readouterr().err
+
+
+def test_form_feed_does_not_shift_lines(tmp_path, capsys):
+    p = tmp_path / "ff.py"
+    p.write_bytes(b"import os\n\x0c\ndef target():\n    return 1\n")
+    out = ok([str(p), "--symbol", "target"], capsys).splitlines()
+    assert out == ["== %s:3-4 ==" % p, "def target():", "    return 1"]
+
+
+def test_unicode_line_separator_in_a_string_does_not_shift_lines(tmp_path,
+                                                                 capsys):
+    p = tmp_path / "ls.py"
+    p.write_text('S = "a b"\n\n\ndef target():\n    return 1\n',
+                 encoding="utf-8")
+    out = ok([str(p), "--symbol", "target"], capsys).splitlines()
+    assert out[1:] == ["def target():", "    return 1"]

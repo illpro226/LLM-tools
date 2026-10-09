@@ -1,6 +1,8 @@
 # xread keeps closing `#`s in markdown headings, so `--symbol` misses them
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session.
+**RESOLVED 2026-10-09 (xread v0.6.0).** The closing `#` run is dropped from the heading name.
+
+Filed 2026-10-08 from a full-suite review session.
 
 ## What broke
 

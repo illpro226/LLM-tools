@@ -1,5 +1,22 @@
 # xread Changelog
 
+- 2026-10-09: v0.6.0 — fixes for four known issues, each pinned by a test
+  that fails on v0.5.0.
+  **TypeScript module constants were not symbols.** The 2026-09-11
+  constants fix stopped at Python, so `export const LIST_CONFIG = {...}`,
+  a multi-line array, `new Set([...])` and `cache(async () => ...)` all
+  answered `symbol not found`. Module-level `const`/`let`/`var` are now
+  `constant` symbols with their doc comment, and a span waits for its
+  `(`/`[` as well as its braces. Locals inside a body are not symbols.
+  **Excerpts were one line off after a form feed or U+2028.**
+  `str.splitlines()` breaks on those; ast and git do not. Lines now split
+  on newlines only.
+  **`## Usage ##` was named `Usage ##`**, so `--symbol Usage` missed it.
+  The optional closing `#` run is dropped, as codediff already did.
+  **Empty results printed nothing with exit 0.** A `--query` miss now
+  prints `no blocks match "X" in FILE` and exits 1; `--headings` on a
+  file with no symbols says so; `--top 0`/`-1` is a usage error instead
+  of silently dropping blocks. 10 new tests (71 total).
 - 2026-09-24: v0.5.0 - fixes from a suite review, each pinned by a test
   that fails on v0.4.2.
   **Conditional definitions were invisible.** Only direct children of the

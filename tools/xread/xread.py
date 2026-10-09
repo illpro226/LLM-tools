@@ -35,7 +35,7 @@ import os
 import re
 import sys
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 PY_EXTS = {".py", ".pyi"}
 TS_EXTS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"}
@@ -181,6 +181,11 @@ _TS_DECLS = (
     ("type", re.compile(
         r"^(?:export\s+)?type\s+([A-Za-z_$][\w$]*)\s*=")),
 )
+# Module-level `const X = ...` that is not a function: a config object, a
+# lookup table, `new Set([...])`, `cache(async () => ...)`. Matched only at
+# depth 0 outside every symbol, so locals inside a body are not symbols.
+_TS_CONST = re.compile(
+    r"^(?:export\s+)?(?:declare\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)")
 
 _TS_METHOD = re.compile(
     r"^(?:(?:public|private|protected|static|readonly|async|override|get|set)"
@@ -245,8 +250,9 @@ def _template_close(line):
 
 def parse_ts(source, lines):
     symbols = []
-    stack = []  # open symbols: [(symbol, close_depth)]
+    stack = []  # open symbols: [(symbol, close_depth, close_pdepth)]
     depth = 0
+    pdepth = 0  # ( and [ depth: what a multi-line array literal opens
     state = {"comment": False, "template": False}
 
     for i, raw in enumerate(lines, 1):
@@ -274,29 +280,42 @@ def parse_ts(source, lines):
                 if m:
                     decl = (kind, m.group(1))
                     break
+        if decl is None and not stack and depth == 0 and pdepth == 0:
+            m = _TS_CONST.match(code)
+            if m:
+                decl = ("constant", m.group(1))
 
         if decl:
             kind, name = decl
             start = _extend_comments(lines, i, ("//", "*", "/*"))
-            qual = ".".join(s["name"] for s, _ in stack) or ""
+            qual = ".".join(s["name"] for s, _, _ in stack) or ""
             qual = (qual + "." if qual else "") + name
             sym = {"name": name, "qual": qual, "kind": kind, "start": start,
                    "end": i, "top": not stack}
             symbols.append(sym)
-            stack.append((sym, depth))
+            stack.append((sym, depth, pdepth))
 
         depth += code.count("{") - code.count("}")
-        while stack and depth <= stack[-1][1]:
-            sym, _ = stack.pop()
+        pdepth += (code.count("(") + code.count("[")
+                   - code.count(")") - code.count("]"))
+        # A constant also waits for its brackets: `= [` on one line and
+        # `];` ten lines on has no brace to close.
+        while stack and depth <= stack[-1][1] and (
+                stack[-1][0]["kind"] != "constant"
+                or pdepth <= stack[-1][2]):
+            sym, _, _ = stack.pop()
             sym["end"] = i
-    for sym, _ in stack:  # unterminated (parse imperfection): close at EOF
+    for sym, _, _ in stack:  # unterminated (parse imperfection): close at EOF
         sym["end"] = len(lines)
     return symbols
 
 
 # ---------------------------------------------------------- markdown parser
 
-_MD_HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
+# The closing `#` run is optional syntax (CommonMark 4.2), not part of the
+# name: `## Usage ##` is `Usage`, as codediff's _MD_HEADING_RE already reads
+# it. A `#` with no space before it (`# C#`) stays.
+_MD_HEADING = re.compile(r"^(#{1,6})\s+(.+?)(?:\s+#+)?\s*$")
 _MD_FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
 
 
@@ -401,11 +420,27 @@ def load(paths):
                 source = fh.read()
         except OSError as exc:
             raise XreadError("%s: %s" % (path, exc.strerror or exc))
-        lines = source.splitlines()
+        lines = split_lines(source)
         parse = parser_for(path)
         symbols = parse(source, lines) if parse else None
         files.append((path, lines, symbols))
     return files
+
+
+_NEWLINE = re.compile(r"\r\n|\r|\n")
+
+
+def split_lines(source):
+    """Lines numbered the way ast, git and editors number them.
+
+    str.splitlines() also breaks on \\f, \\v, \\x1c-\\x1e, \\x85 and
+    U+2028/U+2029, so after a form-feed page break every excerpt was one
+    line off from the ast line numbers in its own header.
+    """
+    lines = _NEWLINE.split(source)
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
 
 
 # ------------------------------------------------------------------ modes
@@ -667,6 +702,13 @@ def cmd_headings(files, max_tokens):
             raise XreadError(
                 "%s: --headings needs a file xread can parse "
                 "(python, js/ts, markdown, prisma)" % path)
+        if not symbols:
+            # Empty stdout and exit 0 read as "the tool broke" as easily
+            # as "the file has no outline".
+            entries.append((0, "%s: no %s (try --lines or --query)"
+                            % (path, "headings" if parse is parse_markdown
+                               else "symbols")))
+            continue
         if parse is parse_markdown:
             top = min((h["level"] for h in symbols), default=1)
             for h in symbols:
@@ -744,6 +786,9 @@ def main(argv=None):
     parser.add_argument("--version", action="version",
                         version="xread %s" % __version__)
     args = parser.parse_args(argv)
+    if args.top < 1:
+        # scored[:-1] silently dropped the last block, scored[:0] all.
+        parser.error("--top must be at least 1")
 
     modes = [bool(args.symbol), bool(args.lines), bool(args.query),
              args.headings]
@@ -761,6 +806,7 @@ def main(argv=None):
         args.headings = True
         sys.stderr.write("xread: no mode given, showing --headings\n")
 
+    code = 0
     try:
         files = load(args.paths)
         if args.headings:
@@ -779,6 +825,11 @@ def main(argv=None):
                 regions = resolve_query(files, args.query, args.top)
             sources = {path: lines for path, lines, _ in files}
             lines = apply_budget(regions, sources, args.max_tokens)
+            if args.query and not regions:
+                # Exit 1, like sgrep: a miss is an answer, not an error.
+                lines = ['no blocks match "%s" in %s' % (
+                    args.query, ", ".join(p for p, _, _ in files))]
+                code = 1
     except XreadError as exc:
         print("xread: %s" % exc, file=sys.stderr)
         return 2
@@ -789,7 +840,7 @@ def main(argv=None):
         pass
     if lines:
         print("\n".join(lines))
-    return 0
+    return code
 
 
 if __name__ == "__main__":

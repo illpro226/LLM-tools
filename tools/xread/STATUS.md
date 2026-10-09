@@ -1,6 +1,6 @@
 # xread Status
 
-Implemented (v0.5.0) and passing tests. A call with no mode flag defaults to
+Implemented (v0.6.0) and passing tests. A call with no mode flag defaults to
 `--headings` (v0.4.1) rather than erroring.
 
 - `xread.py` — single-file CLI covering all PRD modes plus the markdown mode
@@ -13,8 +13,11 @@ Implemented (v0.5.0) and passing tests. A call with no mode flag defaults to
   Python via `ast` (exact spans, decorators + attached comments; defs and
   constants under module/class-level `if`/`try`/`with` count), JS/TS via
   a brace-tracking line scanner (heuristic: declarations must open their
-  brace on the same line), markdown via a CommonMark fence-aware heading
-  scan (a fence closes only on the same character, at least as long), Prisma
+  brace on the same line; module-level `const`/`let`/`var` are
+  `constant` symbols spanning their initializer, brackets included),
+  markdown via a CommonMark fence-aware heading
+  scan (a fence closes only on the same character, at least as long;
+  a closing `#` run is not part of a heading's name), Prisma
   schemas via a flat block scanner (model/enum/type/view/generator/
   datasource, attached `//` comments).
 - Query mode pulls a short fenced sibling section into a markdown match
@@ -24,10 +27,15 @@ Implemented (v0.5.0) and passing tests. A call with no mode flag defaults to
   hides the deepest entries first, so the outline still spans the file,
   and truncates the top level only as the last rung.
 - Files are read as `utf-8-sig`, so a byte-order mark no longer breaks the
-  Python parse or hides a line-1 JS declaration.
-- Tests: `tests/test_xread.py` (61 tests) against fixtures in
-  `tests/fixtures/` (sample.py, sample.ts, doc.md, rank.md, api.md,
-  schema.prisma, generated big.py).
+  Python parse or hides a line-1 JS declaration. Lines split on
+  `\r\n`/`\r`/`\n` only, as ast and git count them, so a form feed or
+  U+2028 no longer shifts every excerpt after it.
+- Empty results say so: a `--query` miss prints `no blocks match ...`
+  and exits 1 (like sgrep); `--headings` on a file with no symbols says
+  `no symbols`; `--top` below 1 is a usage error.
+- Tests: `tests/test_xread.py` (71 tests) against fixtures in
+  `tests/fixtures/` (sample.py, sample.ts, module_consts.ts, doc.md,
+  rank.md, api.md, schema.prisma, generated big.py).
 
 Not done / later: no packaging or PATH install story; TS parser does not
 handle Allman-style braces or multi-line arrow parameter lists; no

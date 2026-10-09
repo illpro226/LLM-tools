@@ -1,6 +1,8 @@
 # xread --symbol cannot find a TypeScript `export const`, so the 2026-09-11 constants fix stops at Python
 
-**STATUS: open.** Filed 2026-10-06 from a bible-atlas session.
+**RESOLVED 2026-10-09 (xread v0.6.0).** Module-level `const`/`let`/`var` are `constant` symbols spanning their initializer; all four shapes below resolve (fixture `module_consts.ts`).
+
+Filed 2026-10-06 from a bible-atlas session.
 
 ## What happened
 

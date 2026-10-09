@@ -1,6 +1,8 @@
 # xread prints nothing at all for empty results
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session.
+**RESOLVED 2026-10-09 (xread v0.6.0).** A query miss prints `no blocks match ...` and exits 1; `--headings` says `no symbols`; `--top < 1` is a usage error.
+
+Filed 2026-10-08 from a full-suite review session.
 
 ## What broke
 
