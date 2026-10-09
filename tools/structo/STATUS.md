@@ -1,6 +1,6 @@
 # structo Status
 
-Implemented (v0.7.0) and passing tests.
+Implemented (v0.7.1) and passing tests.
 
 - `structo.py` — single-file CLI printing the schema and shape of a data
   file instead of its content. Formats: JSON, JSONL, YAML (via PyYAML —
@@ -23,7 +23,7 @@ Implemented (v0.7.0) and passing tests.
   exact); array *elements* beyond `--sample N` (default 10) are not
   aggregated and the line carries a `~` marker (ADR-003 — sampling is
   first-N, deterministic, no RNG). One or two example values per scalar,
-  bools included (`e.g. true`). YAML scalars are typed by PyYAML's own
+  bools included (`e.g. true`) unless seen both ways. YAML scalars are typed by PyYAML's own
   resolver, so `yes`/`off`/`TRUE` are bools and dates are `datetime`,
   as `yaml.safe_load` returns them.
 - CSV/TSV: per-column type, null rate, min/max (numeric or lexicographic;
@@ -71,7 +71,7 @@ Implemented (v0.7.0) and passing tests.
   CSV header or JSONL record; non-utf-8 TOML, malformed YAML, CSV errors
   and unreadable files are one-line errors with exit 2, not tracebacks.
   A CSV cell of any length is read (the 128 KiB default limit is lifted).
-- Tests: `tests/test_structo.py` (87 tests) over one committed fixture
+- Tests: `tests/test_structo.py` (88 tests) over one committed fixture
   per format plus the generated large files (slow-marked).
 
 Not done / later: XML has no `--path` zoom and no `--select`; no

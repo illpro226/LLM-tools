@@ -1,5 +1,9 @@
 # structo Changelog
 
+- 2026-10-09: v0.7.1 — a bool seen both ways prints no example.
+  v0.7.0 gave bools examples so a `--path` leaf shows its value, but a
+  flag across many records printed `e.g. true, false`, which says only
+  "bool". One value is kept; both are dropped. 1 new test (88 total).
 - 2026-10-09: v0.7.0 — fixes for six known issues, each pinned by a test
   that fails on v0.6.1.
   **stdin.** `CMD | structo -` (or no FILE with input piped in) reads

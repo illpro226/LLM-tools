@@ -41,7 +41,7 @@ import shutil
 import sys
 import tempfile
 
-__version__ = "0.7.0"
+__version__ = "0.7.1"
 
 DEFAULT_SAMPLE = 10
 # ADR-006: schema output is capped by default; --select/--raw are not.
@@ -486,8 +486,13 @@ def render_schema(shape, level, key_cap=0):
                          % (lo, hi))
             if node["sampled"]:
                 parts.append("(first %d sampled ~)" % shape.sample)
-        if level == 0 and node["examples"]:
-            parts.append("e.g. " + ", ".join(node["examples"]))
+        examples = node["examples"]
+        if {"true", "false"} <= set(examples):
+            # A flag seen both ways: "e.g. true, false" says nothing the
+            # type did not. One value is worth printing; both are not.
+            examples = [e for e in examples if e not in ("true", "false")]
+        if level == 0 and examples:
+            parts.append("e.g. " + ", ".join(examples))
         out.append("  " * depth + "  ".join(parts))
         kids = [(k, node["keys"][k]) for k in node["order"]]
         if node["elem"] is not None:

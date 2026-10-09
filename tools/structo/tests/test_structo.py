@@ -850,3 +850,12 @@ def test_stdin_select_and_raw(monkeypatch, capsys):
     assert ok(["-", "--select", "id"], capsys).split() == ["id", "1", "2"]
     monkeypatch.setattr(sys, "stdin", _Stdin(b'{"v": "x y"}'))
     assert ok(["-", "--path", "v", "--raw"], capsys) == "x y\n"
+
+
+def test_bool_seen_both_ways_prints_no_example(tmp_path, capsys):
+    """`e.g. true, false` costs tokens and says only "bool"."""
+    p = tmp_path / "rows.jsonl"
+    p.write_text('{"on": true}\n{"on": false}\n{"on": true}\n',
+                 encoding="utf-8")
+    out = norm(ok([str(p)], capsys))
+    assert "on: bool 100%" in out
