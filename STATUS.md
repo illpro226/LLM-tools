@@ -23,8 +23,17 @@ the suite.
   contract at 80 lines, `CLAUDE.md` is one line, all six doc kinds exist, and
   both gates run.
 - `python scripts/test_all.py` runs every suite in parallel and states the
-  result in one screen: all nine pass, 469 tests (534 with `--archived`),
-  2026-09-24. A review that day fixed bugs in all nine tools — among them
+  result in one screen: all nine pass, 548 tests, 2026-10-09.
+- The 2026-10-08 review's 24 known issues and 9 older ones are fixed and
+  archived (2026-10-09), each pinned by a test that fails on the previous
+  version. Among them: codediff filed a URL swap as a comment-only edit;
+  runlite and tokq now budget by default (`docs/decisions/0011`);
+  `gitbrief show COMMIT`, `structo -` (stdin) and `sgrep --plain` are new;
+  `str.splitlines()` line drift is gone from five tools. Each tool's
+  CHANGELOG has the details. One issue stays open on purpose:
+  `bounded-builtin-calls-treated-as-equivalent-to-sgrep` waits on usage
+  data, not code.
+- A review on 2026-09-24 fixed bugs in all nine tools — among them
   an sgrep budget loop quadratic in matching files (8 minutes at 20,000),
   an sgrep stderr deadlock, structo and xread misreading UTF-8 BOM files,
   gitbrief's `+0 -0` counts from a subdirectory, runlite `trace` inventing
@@ -55,9 +64,8 @@ the suite.
 - Decide whether the MCP adapter (`0004`) is still wanted, or supersede it. It
   has been accepted-and-unbuilt long enough that the acceptance is stale.
 - Retire `doc/` and `START.md`, or write down why they stay.
-- Work the 24 known issues filed by the 2026-10-08 review. Worst first:
-  codediff hides JS string/URL changes as comment-only; runlite's unbounded
-  default; gitbrief `hunks` "no changes" on binary diffs.
+- Deploy `hooks/llm-tools-guard.py` to `~/.claude/hooks` (its grep
+  message now names `sgrep --plain`); the live copy predates it.
 - Review follow-ups (suggestions, not decided):
   - One shared copy of duplicated code, or a test that fails when copies
     differ. The JS scanner is in 4 tools, and `_git`/`fit` are repeated.
@@ -66,6 +74,7 @@ the suite.
     paths, binary, empty) run against every tool.
   - One suite rule: exit 0 = found, 1 = none, 2 = error, never a traceback.
     Each `main` catches everything.
-  - Revisit ADR-0005's exemption: runlite and `tokq lint` are not bounded
-    by construction.
-  - NUL-separated git output (`-z`) wherever gitbrief/codediff parse paths.
+  - NUL-separated git output (`-z`) in gitbrief's status/numstat parses
+    (codediff's are done).
+  - Only sgrep and `structo --select` write `\n` on Windows; every other
+    tool's stdout still writes `\r\n`.
