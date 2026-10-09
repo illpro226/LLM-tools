@@ -1,5 +1,14 @@
 # repoindex Changelog
 
+- 2026-10-09: v0.1.7 — fixes pinned by tests that fail on v0.1.6.
+  **Every symbol after a multi-line template literal was lost.** A `{`
+  inside the literal raised the brace depth for good, so nothing later
+  was top level, in repoindex and in codediff, which parses through it.
+  xread, repomap and gitbrief had the template-literal state already;
+  this copy of the scanner never got it. **A BOM'd `.gitignore` dropped
+  its first rule** (now `utf-8-sig`). **A form feed shifted every later
+  JS/TS/Go line number** (`str.splitlines()`); lines split on newlines
+  only. 3 new tests (64 total).
 - 2026-09-24: v0.1.6 — fixes from a suite review, each pinned by a test
   that fails on v0.1.5. **The read-only `sql` could create a database.**
   Its URI was not quoted, so a `#` in the repo path (a `C#` project folder)

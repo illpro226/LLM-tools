@@ -712,3 +712,35 @@ def test_non_utf8_gitignore_does_not_abort_the_build(tmp_path):
     cli.build(str(tmp_path))
     conn = _connect(tmp_path)
     assert _rows(conn, "SELECT path FROM files") == [("keep.py",)]
+
+
+# ------------------------------------------------ v0.1.7 review fixes
+
+def test_symbols_after_a_multiline_template_literal_are_found():
+    """A `{` inside a template literal raised the depth for good, and every
+    later top-level declaration was lost (xread had the fix; this copy of
+    the scanner did not)."""
+    src = ("const html = `\n  <div>{</div>\n`;\n"
+           "export function after() { return 1; }\n"
+           "const t = `\n{`; export function same() {}\n"
+           "export function last() {}\n")
+    ef = extract.extract("t.js", src, "javascript")
+    got = [(s.qualname.split("::")[-1], s.line_start) for s in ef.symbols]
+    assert ("after", 4) in got and ("last", 7) in got, got
+
+
+def test_form_feed_does_not_shift_js_lines():
+    src = ("const a = 1;\n\x0c\nexport function target() {\n  return 1;\n"
+           "}\nexport function b() {}\n")
+    ef = extract.extract("t.ts", src, "typescript")
+    got = [(s.qualname.split("::")[-1], s.line_start) for s in ef.symbols]
+    assert got == [("target", 3), ("b", 6)]
+
+
+def test_bom_gitignore_keeps_its_first_rule(tmp_path):
+    (tmp_path / ".gitignore").write_bytes(b"\xef\xbb\xbfsecret.py\n")
+    (tmp_path / "secret.py").write_text("def s(): pass\n", encoding="utf-8")
+    (tmp_path / "keep.py").write_text("def k(): pass\n", encoding="utf-8")
+    cli.build(str(tmp_path))
+    conn = _connect(tmp_path)
+    assert _rows(conn, "SELECT path FROM files") == [("keep.py",)]

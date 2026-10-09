@@ -1,6 +1,6 @@
 # repoindex Status
 
-Implemented (v0.1.6) and passing tests.
+Implemented (v0.1.7) and passing tests.
 
 - `repoindex/` — importable package: `extract.py` (pure, filesystem-free
   `extract(path, source, lang=None) -> ExtractedFile`, ADR-006), `resolve.py`
@@ -34,8 +34,11 @@ Implemented (v0.1.6) and passing tests.
   write-statement pre-check); `status` reports freshness and per-language
   file/symbol counts.
 - Discovery prunes `.gitignore`d directories (not just matching files),
-  tolerates a non-utf-8 `.gitignore`, and reads sources as `utf-8-sig`.
-- Tests: `tests/test_repoindex.py` (61 tests) against a shared fixture repo
+  tolerates a non-utf-8 or BOM'd `.gitignore`, and reads sources as
+  `utf-8-sig`. The JS/TS scanner carries a multi-line template literal
+  across lines, and lines split on newlines only (a form feed does not
+  shift line numbers).
+- Tests: `tests/test_repoindex.py` (64 tests) against a shared fixture repo
   (`tests/fixtures/repo/`) covering every relationship kind — a call cycle,
   an import cycle (`py/cyc_a.py` <-> `py/cyc_b.py`, added for `rq findcycles`),
   a dynamic/getattr call, an ambiguous bare name, reads/writes, a resolvable

@@ -353,11 +353,38 @@ def _strip_js_noise(line, state):
                 if line[j] == quote:
                     break
                 j += 1
+            if j >= n and quote == "`":
+                state["template"] = True  # the literal runs onto later lines
             i = j + 1
             continue
         out.append(ch)
         i += 1
     return "".join(out)
+
+
+def _template_close(line):
+    """Index of the backtick closing a template literal, or -1."""
+    i = 0
+    while i < len(line):
+        if line[i] == "\\":
+            i += 2
+            continue
+        if line[i] == "`":
+            return i
+        i += 1
+    return -1
+
+
+_NEWLINE = re.compile(r"\r\n|\r|\n")
+
+
+def split_lines(source):
+    """Lines numbered as ast and git number them. str.splitlines() also
+    breaks on form feeds and U+2028, shifting every later line number."""
+    lines = _NEWLINE.split(source)
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
 
 
 _TS_CLASS = re.compile(
@@ -457,11 +484,11 @@ def _split_import_names(blob):
 
 
 def _extract_ts(path, source, lang):
-    lines = source.splitlines()
+    lines = split_lines(source)
     symbols, refs, imports, inherits, implements = [], [], [], [], []
     depth = 0
     class_stack = []  # (qualname, end-detection depth)
-    state = {"comment": False}
+    state = {"comment": False, "template": False}
     # Function-region shadow tracking (known-issue
     # repoindex-local-var-shadowing-resolved-ref, Python fixed in v0.1.2):
     # while inside a function body, call refs are buffered and names bound
@@ -481,6 +508,16 @@ def _extract_ts(path, source, lang):
         region = None
 
     for i, raw in enumerate(lines, 1):
+        if state["template"]:
+            # Inside a multi-line template literal: a `{` in its text used
+            # to count as code, so the depth never came back to 0 and every
+            # later top-level declaration was lost. Code after the closing
+            # backtick still counts.
+            close = _template_close(raw)
+            if close == -1:
+                continue
+            state["template"] = False
+            raw = raw[close + 1:]
         # Import paths are string literals -- match them against the raw
         # line, not the noise-stripped one (which deletes string contents).
         line = raw.strip()
@@ -668,7 +705,7 @@ def _go_body_bindings(code):
 
 
 def _extract_go(path, source):
-    lines = source.splitlines()
+    lines = split_lines(source)
     symbols, refs, imports = [], [], []
     go_interfaces = {}
     in_import_block = False

@@ -1,6 +1,8 @@
 # repoindex's JS scanner loses every symbol after a multi-line template literal
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session.
+**RESOLVED 2026-10-09 (repoindex v0.1.7).** The template-literal state and `_template_close` are ported in. The four copies are still separate; the shared-scanner suggestion stays in STATUS.md Next.
+
+Filed 2026-10-08 from a full-suite review session.
 Affects codediff too, because it parses both sides through `repoindex.extract`.
 
 ## What broke

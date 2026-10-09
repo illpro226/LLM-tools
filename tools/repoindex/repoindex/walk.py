@@ -15,8 +15,9 @@ def load_gitignore(root):
     pats = []
     if os.path.isfile(path):
         # A .gitignore is not always utf-8 (Latin-1 comments are common on
-        # Windows); a decode error here aborted the whole build.
-        with open(path, encoding="utf-8", errors="replace") as f:
+        # Windows); a decode error here aborted the whole build. utf-8-sig:
+        # a BOM (Notepad, PowerShell 5) glued to the first rule disabled it.
+        with open(path, encoding="utf-8-sig", errors="replace") as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#"):
