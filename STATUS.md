@@ -1,6 +1,6 @@
 # STATUS — LLM-tools
 
-Last updated: 2026-09-24
+Last updated: 2026-10-08
 
 Written to be read by an agent starting cold. Keep it under a screen. Each
 tool's own `tools/<name>/STATUS.md` is the authority on that tool — this file is
@@ -55,3 +55,17 @@ the suite.
 - Decide whether the MCP adapter (`0004`) is still wanted, or supersede it. It
   has been accepted-and-unbuilt long enough that the acceptance is stale.
 - Retire `doc/` and `START.md`, or write down why they stay.
+- Work the 24 known issues filed by the 2026-10-08 review. Worst first:
+  codediff hides JS string/URL changes as comment-only; runlite's unbounded
+  default; gitbrief `hunks` "no changes" on binary diffs.
+- Review follow-ups (suggestions, not decided):
+  - One shared copy of duplicated code, or a test that fails when copies
+    differ. The JS scanner is in 4 tools, and `_git`/`fit` are repeated.
+    Two of the bugs were copies drifting.
+  - A shared odd-input fixture set (BOM, CRLF, `\f`, spaces/quotes in
+    paths, binary, empty) run against every tool.
+  - One suite rule: exit 0 = found, 1 = none, 2 = error, never a traceback.
+    Each `main` catches everything.
+  - Revisit ADR-0005's exemption: runlite and `tokq lint` are not bounded
+    by construction.
+  - NUL-separated git output (`-z`) wherever gitbrief/codediff parse paths.
