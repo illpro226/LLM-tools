@@ -1,6 +1,6 @@
 # STATUS — LLM-tools
 
-Last updated: 2026-10-08
+Last updated: 2026-10-09
 
 Written to be read by an agent starting cold. Keep it under a screen. Each
 tool's own `tools/<name>/STATUS.md` is the authority on that tool — this file is
@@ -64,8 +64,6 @@ the suite.
 - Decide whether the MCP adapter (`0004`) is still wanted, or supersede it. It
   has been accepted-and-unbuilt long enough that the acceptance is stale.
 - Retire `doc/` and `START.md`, or write down why they stay.
-- Deploy `hooks/llm-tools-guard.py` to `~/.claude/hooks` (its grep
-  message now names `sgrep --plain`); the live copy predates it.
 - Review follow-ups (suggestions, not decided):
   - One shared copy of duplicated code, or a test that fails when copies
     differ. The JS scanner is in 4 tools, and `_git`/`fit` are repeated.
