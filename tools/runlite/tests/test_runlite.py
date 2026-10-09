@@ -356,8 +356,14 @@ def test_main_pins_stderr_to_utf8(tmp_path, monkeypatch):
 
 # ------------------------------------------------ v0.3.1 review fixes
 
+def _word(i):
+    """A distinct word per i, with no digits: repeats that differ only by a
+    number now collapse, and these ladder tests need distinct problems."""
+    return "".join(chr(97 + int(c)) for c in str(i))
+
+
 def _warnings_log(n):
-    return "\n".join("warning: thing %d happened in src/a.py:%d" % (i, i)
+    return "\n".join("warning: %s happened in src/a.py:%d" % (_word(i), i)
                      for i in range(n))
 
 
@@ -365,13 +371,15 @@ def test_budget_terminates_with_many_problems():
     """One line per problem is O(problems): 300 generic warnings printed
     300 lines against --max-tokens 100. The last rung now cuts the list and
     says so, and the dropped log tail is announced too."""
-    problems, tail = runlite.parse_generic(_warnings_log(300))
+    # A last line that is not a problem, so the tail has news to drop.
+    problems, tail = runlite.parse_generic(_warnings_log(300)
+                                           + "\nlinking stage done")
     lines = runlite.render(3, 0.1, "generic", problems, tail, 100, "")
     assert runlite._tokens_of(lines) <= 100
     assert any(re.match(r"^\(… \d+ of them not listed; the raw log has "
                         r"every one", l) for l in lines)
     assert "(log tail dropped for --max-tokens 100)" in lines
-    assert lines[2] == "warning: thing 0 happened in src/a.py:0"
+    assert lines[2] == "warning: a happened in src/a.py:0"
 
 
 def test_a_single_hidden_one_liner_is_shown_not_counted():
@@ -379,7 +387,7 @@ def test_a_single_hidden_one_liner_is_shown_not_counted():
     for the other."""
     problems, tail = runlite.parse_generic(_warnings_log(2))
     lines = runlite.render(1, 0.1, "generic", problems, [], 10, "")
-    assert "warning: thing 1 happened in src/a.py:1" in lines
+    assert "warning: b happened in src/a.py:1" in lines
     assert not any("not listed" in l for l in lines)
 
 
@@ -428,12 +436,49 @@ def test_language_extractor_still_drops_only_failures_on_exit_0():
 
 def test_default_budget_bounds_a_noisy_failing_run(capsys):
     """docs/decisions/0011: 3000 warning lines made a report larger than
-    the log it replaced, because the default was unbounded."""
+    the log it replaced, because the default was unbounded. Distinct
+    lines here, so the budget (not the collapse) is what bounds it."""
     script = ("import sys\n"
               "for n in range(3000):\n"
-              "    print('warning: thing %d is deprecated' % n)\n"
+              "    w = ''.join(chr(97 + int(c)) for c in str(n))\n"
+              "    print('warning: %s is deprecated' % w)\n"
               "sys.exit(1)\n")
     code, out, _ = run(["--", sys.executable, "-c", script], capsys)
     assert code == 1
     assert len(out) // 4 <= runlite.DEFAULT_MAX_TOKENS
     assert "for --max-tokens 2000" in out
+
+
+def test_repeats_collapse_to_one_line_with_a_count(capsys):
+    """A budget only capped the noise: 3000 `warning: thing N` lines still
+    filled 2000 tokens with one fact. Now: one line, a count, no tail that
+    repeats it."""
+    script = ("import sys\n"
+              "for n in range(3000):\n"
+              "    print('warning: thing %d is deprecated' % n)\n"
+              "sys.exit(1)\n")
+    code, out, _ = run(["--", sys.executable, "-c", script], capsys)
+    lines = out.splitlines()
+    assert code == 1
+    assert "3000 problems (1 distinct)" in lines[0]
+    assert "warning: thing 0 is deprecated  (×3000 similar)" in lines
+    assert "(log tail omitted: its last 20 lines repeat the problems above)" \
+        in lines
+    assert len(lines) <= 6
+
+
+def test_distinct_problems_do_not_collapse():
+    problems = [runlite._problem("FAIL test_login", "t.py:3"),
+                runlite._problem("FAIL test_logout", "t.py:9")]
+    lines = runlite.render(1, 0.1, "pytest", problems, [], 0, "")
+    assert "2 problems" in lines[0] and "distinct" not in lines[0]
+    assert "×" not in "\n".join(lines)
+
+
+def test_generic_pass_keeps_a_short_tail():
+    log_text = "".join("chunk %d emitted\n" % i for i in range(30)) + \
+        "build finished in 2.1s\n"
+    problems, tail = runlite.parse_generic(log_text)
+    lines = runlite.render(0, 0.1, "generic", problems, tail, 0, "")
+    assert lines[-1] == "  build finished in 2.1s"
+    assert "log tail (last 3 lines)" in lines

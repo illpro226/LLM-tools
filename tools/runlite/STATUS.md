@@ -1,6 +1,6 @@
 # runlite Status
 
-Implemented (v0.6.0) and passing tests.
+Implemented (v0.7.0) and passing tests.
 
 - `runlite.py` — single-file CLI covering all PRD modes: run + distilled
   report (exit code, wall time, problems with `file:line`), `--max-tokens`
@@ -14,7 +14,13 @@ Implemented (v0.6.0) and passing tests.
 - A zero exit suppresses `FAIL`-titled findings (and says which extractor
   produced them): the exit code outranks anything pattern-matched out of
   the log. The generic extractor reports no problems at all on exit 0,
-  only a count of lines mentioning a warning.
+  only a count of lines mentioning a warning, and its tail shrinks to
+  the last 3 lines.
+- Repeats collapse before any budget applies: problems (and `trace`
+  tracebacks) that differ only in numbers or quoted values fold into
+  the first with `(×N similar)`, and the header counts both
+  (`3000 problems (1 distinct)`). Tail lines that repeat a listed
+  problem are dropped.
 - The header reports the exact size of the log the report replaced
   (`[log N B]`), from the buffer runlite already holds; omitted when the
   size was not measured, so an unmeasured run never reads as an empty log.
@@ -38,9 +44,9 @@ Implemented (v0.6.0) and passing tests.
 - Known limit: JVM library detection is package-prefix based (JDK, test
   runners, build tools only), so third-party framework frames read as
   project frames — deliberate, see ADR-005.
-- Tests: `tests/test_runlite.py` (43) against canned logs in
-  `tests/fixtures/logs/`, `tests/test_runlite_trace.py` (48) against canned
-  traces in `tests/fixtures/traces/`; 91 total, no real toolchains needed.
+- Tests: `tests/test_runlite.py` (46) against canned logs in
+  `tests/fixtures/logs/`, `tests/test_runlite_trace.py` (49) against canned
+  traces in `tests/fixtures/traces/`; 95 total, no real toolchains needed.
 
 Not done / later: no packaging or PATH install story yet (run `./runlite.py`
 or symlink it); no timeout handling; no `--json` report.

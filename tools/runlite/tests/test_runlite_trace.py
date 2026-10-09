@@ -325,7 +325,9 @@ def test_every_budget_rung_is_bounded_and_monotonic(capsys):
 
 
 def test_multi_trace_budget_collapses_the_later_traces(capsys, monkeypatch):
-    text = trace_text("go_panic.txt") + "\n" + trace_text("go_panic.txt")
+    # The second panic at another site: identical traces now fold into one.
+    text = (trace_text("go_panic.txt") + "\n"
+            + trace_text("go_panic.txt").replace("pick.go:14", "pick.go:20"))
     stdin_of(monkeypatch, text.encode("utf-8"))
     runlite.main(["trace", "--max-tokens", "70"])
     out = capsys.readouterr().out
@@ -351,8 +353,7 @@ def test_output_is_deterministic_and_free_of_ansi(capsys):
 def test_trace_floor_is_bounded_for_many_traces(capsys, monkeypatch):
     """One summary per trace is O(traces); a log holding hundreds must
     still fit, keep trace #1, and count the rest."""
-    one = trace_text("python_chained.txt")
-    stdin_of(monkeypatch, ("\n".join([one] * 200)).encode("utf-8"))
+    stdin_of(monkeypatch, ("\n".join(_distinct_traces(200))).encode("utf-8"))
     runlite.main(["trace", "--max-tokens", "150"])
     out = capsys.readouterr().out.splitlines()
     assert runlite._tokens_of(out) <= 150
@@ -451,11 +452,31 @@ def test_python_exception_group_members_are_sections():
 
 def test_trace_default_budget_is_on(capsys, tmp_path):
     """docs/decisions/0011: `runlite trace` on a service log is O(traces)."""
-    one = trace_text("python_chained.txt")
     path = tmp_path / "service.log"
-    path.write_text(one * 300, encoding="utf-8")
+    path.write_text("".join(_distinct_traces(300)), encoding="utf-8")
     code = runlite.main(["trace", str(path)])
     out = capsys.readouterr().out
     assert code == 0
     assert len(out) // 4 <= runlite.DEFAULT_MAX_TOKENS
     assert "--max-tokens 2000" in out
+
+
+def _distinct_traces(n):
+    """n copies of one chained trace, each failing at a different line:
+    identical repeats fold into one now, and budget tests need many."""
+    one = trace_text("python_chained.txt")
+    return [one.replace("line 42,", "line %d," % (1000 + i))
+            for i in range(n)]
+
+
+def test_repeated_traces_fold_into_one_with_a_count(capsys, tmp_path):
+    """50 copies of one traceback printed the same summary line 49 times
+    under the first; a service log repeats its one failure all day."""
+    path = tmp_path / "service.log"
+    path.write_text(trace_text("python_chained.txt") * 50, encoding="utf-8")
+    runlite.main(["trace", str(path)])
+    out = capsys.readouterr().out
+    assert "50 traces (1 distinct)" in out.splitlines()[0]
+    assert "ValueError: invalid literal: 'abc'  (×50 similar)" in out
+    assert out.count("ValueError") == 1
+    assert "trimmed" not in out

@@ -35,13 +35,14 @@ import subprocess
 import sys
 import time
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 EXIT_INTERNAL = 125   # runlite's own failure, never the wrapped command's
 EXIT_NOT_FOUND = 127
 EXIT_NO_TRACE = 1     # `trace` only: input held no recognizable stack trace
 
 TAIL_LINES = 20       # generic fallback keeps this many trailing lines
+PASS_TAIL_LINES = 3   # ...and this many when the command exited 0
 # docs/decisions/0011: a failure report was not bounded by construction.
 DEFAULT_MAX_TOKENS = 2000
 MAX_CONTEXT = 6       # cc extractor: context lines kept per diagnostic
@@ -55,6 +56,43 @@ FILE_LINE = re.compile(r"([A-Za-z0-9_.\\/-]+\.[A-Za-z][A-Za-z0-9]*):(\d+)")
 
 def _problem(title, ref="", detail=None):
     return {"title": title, "ref": ref, "detail": detail or []}
+
+
+# What differs between repeats of one problem: numbers and quoted values.
+_VARYING = re.compile(r"\d+|'[^']*'|\"[^\"]*\"")
+
+
+def _shape(text):
+    return _VARYING.sub("#", text)
+
+
+def _collapse_repeats(items, key):
+    """Fold items with the same key into the first, counted in "count".
+
+    A budget alone only capped the noise: 3,000 `warning: thing N is
+    deprecated` lines still filled 2,000 tokens with one fact. Order is
+    kept, so the first occurrence leads.
+    """
+    groups, out = {}, []
+    for item in items:
+        k = key(item)
+        rep = groups.get(k)
+        if rep is None:
+            rep = groups[k] = dict(item, count=1)
+            out.append(rep)
+        else:
+            rep["count"] += 1
+    return out
+
+
+def _problem_key(p):
+    return (_shape(p["title"]), _shape(p["ref"]),
+            tuple(_shape(d) for d in p["detail"]))
+
+
+def _times(item):
+    n = item.get("count", 1)
+    return "  (×%d similar)" % n if n > 1 else ""
 
 
 def _trim(lines):
@@ -432,8 +470,8 @@ def _one_line(p):
     # already carries the path:line it was found by; saying it twice is
     # pure overhead on the extractor that emits the most lines.
     if p["ref"] and p["ref"] not in p["title"]:
-        return p["title"] + "  " + p["ref"]
-    return p["title"]
+        return p["title"] + "  " + p["ref"] + _times(p)
+    return p["title"] + _times(p)
 
 
 def _block(p):
@@ -457,6 +495,9 @@ def render(exit_code, wall, ext_name, problems, tail, max_tokens, log_path,
         # all it can honestly say is how many lines mentioned a warning.
         warned = sum(1 for p in problems if _WARNISH.search(p["title"]))
         problems = []
+        # A pass needs no 20-line tail of build chatter; the language
+        # extractors print none. The last lines are where a summary sits.
+        tail = tail[-PASS_TAIL_LINES:]
     elif exit_code == 0:
         # The exit code is the reliable signal; a "1 problem / FAIL" body
         # under an `exit 0` headline is read as the detail and reported to
@@ -465,8 +506,20 @@ def render(exit_code, wall, ext_name, problems, tail, max_tokens, log_path,
         dropped = len(problems) - len(kept)
         problems = kept
     n = len(problems)
+    problems = _collapse_repeats(problems, _problem_key)
+    if tail and problems:
+        # The generic tail is usually the last of the same noise: 20 more
+        # `warning: thing N` lines under the one that already says ×3000.
+        shapes = {_shape(p["title"]) for p in problems}
+        kept_tail = [t for t in tail if _shape(t.strip()) not in shapes]
+        repeated = len(tail) - len(kept_tail)
+        tail = kept_tail
+    else:
+        repeated = 0
     if n:
         count = "%d problem%s" % (n, "s"[: n != 1])
+        if len(problems) < n:
+            count += " (%d distinct)" % len(problems)
     elif exit_code == 0:
         count = "no problems"
     else:  # a failing run with nothing parsed must not read as a pass
@@ -499,8 +552,13 @@ def render(exit_code, wall, ext_name, problems, tail, max_tokens, log_path,
         lines.extend(_block(p))
     if tail:
         lines.append("")
-        lines.append("log tail (last %d lines)" % len(tail))
+        lines.append("log tail (last %d lines%s)" % (
+            len(tail) + repeated, ", %d repeating the problems above "
+            "omitted" % repeated if repeated else ""))
         lines.extend("  " + t for t in tail)
+    elif repeated:
+        lines += ["", "(log tail omitted: its last %d lines repeat the "
+                      "problems above)" % repeated]
 
     if max_tokens and _tokens_of(lines) > max_tokens and problems:
         return _degrade(header, problems, tail, max_tokens)
@@ -1061,7 +1119,8 @@ def _trace_lines(trace, all_frames, limit=None):
     lines, shown = [], 0
     for n, sec in enumerate(trace["sections"]):
         prefix = "" if n == 0 else sec["kind"] + "  "
-        lines.append(prefix + sec["header"])
+        lines.append(prefix + sec["header"] + (_times(trace) if n == 0
+                                               else ""))
         items = ([("frame", f) for f in sec["frames"]] if all_frames
                  else select_frames(sec["frames"]))
         cut = 0
@@ -1098,11 +1157,23 @@ def _trace_summary(trace):
     # happened; the count is two tokens and keeps the summary honest.
     rest = len(trace["sections"]) - 1
     chained = "  (+%d chained)" % rest if rest else ""
-    return sec["header"] + ref + chained
+    return sec["header"] + ref + chained + _times(trace)
+
+
+def _trace_key(t):
+    # Same exception shape at the same frames: the repeat of one failure in
+    # a service log, whatever value or id it carried this time.
+    return tuple((s["kind"], _shape(s["header"]),
+                  tuple(f["ref"] for f in s["frames"]))
+                 for s in t["sections"])
 
 
 def render_traces(lang, traces, all_frames, max_tokens, input_bytes):
+    n_all = len(traces)
+    traces = _collapse_repeats(traces, _trace_key)
     total = sum(len(s["frames"]) for t in traces for s in t["sections"])
+    distinct = ("" if len(traces) == n_all
+                else " (%d distinct)" % len(traces))
 
     def assemble(limit, collapse_rest, note):
         lead = traces[:1] if collapse_rest else traces
@@ -1111,12 +1182,12 @@ def render_traces(lang, traces, all_frames, max_tokens, input_bytes):
             body, n = _trace_lines(t, all_frames, limit)
             bodies.append(body)
             shown += n
-        n = len(traces)
         frames = "%d frames" % total if total != 1 else "1 frame"
         seen = "" if shown == total else " → %d shown" % shown
-        lines = ["# runlite trace: %s, %d trace%s, %s%s (innermost first)"
+        lines = ["# runlite trace: %s, %d trace%s%s, %s%s (innermost first)"
                  " [input %d B]"
-                 % (lang, n, "s"[: n != 1], frames, seen, input_bytes)]
+                 % (lang, n_all, "s"[: n_all != 1], distinct, frames, seen,
+                    input_bytes)]
         if note:
             lines.append(note)
         for body in bodies:
@@ -1150,9 +1221,9 @@ def render_traces(lang, traces, all_frames, max_tokens, input_bytes):
             return lines
     # 3. Floor: every exception, each with the one path:line that carries
     #    it, never empty of references...
-    head = ["# runlite trace: %s, %d trace%s, %s (summary only)"
+    head = ["# runlite trace: %s, %d trace%s%s, %s (summary only)"
             " [input %d B]"
-            % (lang, len(traces), "s"[: len(traces) != 1],
+            % (lang, n_all, "s"[: n_all != 1], distinct,
                "%d frames" % total if total != 1 else "1 frame", input_bytes),
             note, ""]
     summaries = [_trace_summary(t) for t in traces]

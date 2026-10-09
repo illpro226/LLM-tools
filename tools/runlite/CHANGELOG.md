@@ -1,5 +1,17 @@
 # runlite Changelog
 
+- 2026-10-09: v0.7.0 — repeats collapse. v0.6.0's default budget
+  capped the 3,000-warning run at ~2,000 tokens, but those tokens were
+  still 230 copies of one fact. Problems that differ only in numbers or
+  quoted values now fold into the first, `(×3000 similar)`, and the
+  header says `3000 problems (1 distinct)`; the same run prints 3 lines
+  (~170 bytes, from 8,220). The generic tail drops lines that repeat a
+  listed problem. `trace` folds repeated tracebacks the same way
+  (`50 traces (1 distinct)`, `(×50 similar)`), where it printed one
+  identical summary line per repeat. On exit 0 the generic tail is the
+  last 3 lines, not 20: the language extractors print none on a pass.
+  The budget ladder still governs distinct problems; its tests now use
+  distinct ones. 4 new tests (95 total).
 - 2026-10-09: v0.6.0 — fixes for four known issues from the 2026-10-08
   review, each pinned by a test that fails on v0.5.0.
   **The default was unbounded, and a report could outgrow its log.** 3,000

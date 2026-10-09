@@ -49,3 +49,11 @@ archived `rq`/`testmap`.
 A known-issue entry shows the 2000 default hiding the failure the caller
 needed. runlite always keeps failure #1 in full, so that would mean a
 first failure that alone exceeds the budget.
+
+## Update 2026-10-09 (runlite v0.7.0)
+
+The 8,220 bytes above were still 230 copies of one warning: a budget
+caps noise, it does not remove it. runlite now collapses repeats
+before the budget applies, and the same run prints 3 lines. The
+default stays: it bounds what collapsing cannot, many *distinct*
+problems.
