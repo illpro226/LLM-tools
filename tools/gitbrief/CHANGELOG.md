@@ -1,5 +1,25 @@
 # gitbrief Changelog
 
+- 2026-10-09: v0.4.0 — fixes for six known issues, each pinned by a test
+  that fails on v0.3.0.
+  **`show` said "no changes" for anything that was not a changed file.**
+  A commit SHA (on this branch or another) and a mistyped path both read
+  as a definite "no changes in X". `show COMMIT` now prints that commit's
+  hunks against its first parent, through the `hunks` ladder. A name that
+  is neither a file nor a commit exits 2. A file wins when a name is both.
+  **`hunks` said "no changes" for binary, mode-only and empty files.**
+  Those diffs have no `---`/`+++` lines, which were the only source of the
+  path. The path now comes from the `diff --git` header (spaces included),
+  and such files list as `path (new file, binary)`,
+  `path (mode 100644 → 100755)`, `path (new file, empty)`. Also, a removed
+  line starting `-- ` (an SQL comment) no longer reads as a file header.
+  **`log` turned git errors into "no matching commits"**: exit 128 was
+  accepted for every call, not only on an unborn branch.
+  **`pr` printed at most 1000 as the commit count**: the count now comes
+  from `rev-list --count`, and the listing cap is announced.
+  **The default view dropped its file lists without a word** under a
+  budget; it now says `(file lists dropped for --max-tokens N)`.
+  11 new tests (47 total).
 - 2026-09-24: v0.3.0 — fixes from a suite review, each pinned by a test
   that fails on v0.2.1.
   **Every count read `+0 -0` from a subdirectory.** Porcelain v2 status

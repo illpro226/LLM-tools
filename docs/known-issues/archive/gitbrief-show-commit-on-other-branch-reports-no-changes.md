@@ -1,5 +1,7 @@
 # gitbrief show <sha> reports "No changes" for a real commit
 
+**RESOLVED 2026-10-09 (gitbrief v0.4.0).** `show COMMIT` now prints that commit's hunks against its first parent, on any branch, and a name that is neither a file nor a commit exits 2.
+
 Seen 2026-09-26 in `G:\DataExtremes\Code\TOCH_SS`, checked out on `main`.
 
 `gitbrief show 5cafd23` printed `No changes in 5cafd23`. That commit is the

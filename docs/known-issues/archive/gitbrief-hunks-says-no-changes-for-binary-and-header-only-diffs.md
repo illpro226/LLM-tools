@@ -1,6 +1,8 @@
 # gitbrief hunks says "no changes" for binary and header-only diffs
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session.
+**RESOLVED 2026-10-09 (gitbrief v0.4.0).** The path comes from the `diff --git` header; binary, mode and empty files list with a note.
+
+Filed 2026-10-08 from a full-suite review session.
 
 ## What broke
 

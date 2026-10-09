@@ -1,6 +1,8 @@
 # gitbrief show says "no changes" for a path that does not exist
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session. Minor.
+**RESOLVED 2026-10-09 (gitbrief v0.4.0).** A name that is neither a file nor a commit exits 2.
+
+Filed 2026-10-08 from a full-suite review session. Minor.
 Related: `gitbrief-show-commit-ref-says-no-changes.md` (same fallthrough,
 different input).
 

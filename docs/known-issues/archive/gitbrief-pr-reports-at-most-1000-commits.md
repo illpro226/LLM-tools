@@ -1,6 +1,8 @@
 # gitbrief pr reports "commits (1000)" for any branch with more
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session. Minor.
+**RESOLVED 2026-10-09 (gitbrief v0.4.0).** The count comes from `rev-list --count`.
+
+Filed 2026-10-08 from a full-suite review session. Minor.
 
 ## What broke
 

@@ -1,5 +1,7 @@
 # gitbrief: `show <commit>` reports "No changes" instead of rejecting the argument
 
+**RESOLVED 2026-10-09 (gitbrief v0.4.0).** `show COMMIT` now prints that commit's hunks against its first parent, on any branch, and a name that is neither a file nor a commit exits 2.
+
 **Date:** 2026-09-25
 **Tool:** gitbrief (`show`)
 

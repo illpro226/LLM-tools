@@ -9,6 +9,7 @@ happens by accident.
                                  last 5 commits
 ./gitbrief.py hunks [FILE...]    diff hunks at 1 context line (vs HEAD)
 ./gitbrief.py show FILE          the full diff for exactly one file
+./gitbrief.py show COMMIT        one commit's hunks, on any branch
 ./gitbrief.py log [--grep X] [--author X] [-n N]
 ./gitbrief.py pr BASE            branch summary vs BASE: commits, diffstat,
                                  changed symbols (heuristic; python/js-ts)

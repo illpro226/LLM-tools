@@ -1,6 +1,8 @@
 # gitbrief log masks git errors as "no matching commits"
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session.
+**RESOLVED 2026-10-09 (gitbrief v0.4.0).** 128 is accepted only on an unborn branch. Note: `--grep "("` is valid in git's default basic regex, so the test uses `--author "["`; the original repro likely ran under an extended `grep.patternType`.
+
+Filed 2026-10-08 from a full-suite review session.
 
 ## What broke
 

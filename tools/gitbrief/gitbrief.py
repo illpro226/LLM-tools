@@ -27,7 +27,7 @@ import re
 import subprocess
 import sys
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 # ADR-006: the token cap is on by default. `hunks` on a large working diff
 # is exactly the call that floods a context window, and it is never the
@@ -36,6 +36,7 @@ DEFAULT_MAX_TOKENS = 2000
 
 DEFAULT_COMMITS = 5
 LOG_DEFAULT_N = 10
+PR_LIST_LIMIT = 1000   # commits listed by `pr`; the count is exact
 PY_EXTS = {".py", ".pyi"}
 TS_EXTS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"}
 
@@ -192,7 +193,10 @@ def gather_commits(n, grep=None, author=None, rev_range=None):
         args += ["--author", author]
     if rev_range:
         args.append(rev_range)
-    out = _git(*args, ok_codes=(0, 128))  # 128: no commits yet
+    # 128 is "no commits yet" only on an unborn branch. Elsewhere it is a
+    # real error (a bad --grep regex, a broken ref) and used to print
+    # "no matching commits".
+    out = _git(*args, ok_codes=(0,) if _head_exists() else (0, 128))
     return out.splitlines()
 
 
@@ -266,6 +270,16 @@ def view_default(budget):
                 lines.append("  (… %d more)" % (len(commits) - n_commits))
         elif not commits:
             lines += ["", "no commits yet"]
+        # INVARIANTS: degradation is announced. The file lists and the
+        # commit list used to vanish without a word.
+        dropped = []
+        if any_files and not show_files:
+            dropped.append("file lists")
+        if commits and not n_commits:
+            dropped.append("last commits")
+        if dropped:
+            lines += ["", "(%s dropped for --max-tokens %d)"
+                      % (" and ".join(dropped), budget)]
         return lines
 
     return fit([lambda: render(True, DEFAULT_COMMITS),
@@ -281,20 +295,59 @@ def _head_exists():
                 ok_codes=(0, 1)).strip() != ""
 
 
+def _header_path(line):
+    """The path in `diff --git a/P b/P`, or None.
+
+    With --no-renames both halves name the same path, so the split is
+    unambiguous even when P contains spaces: the line is `a/` + P + ` b/`
+    + P. A C-quoted header (tab, quote, backslash in P) returns None and
+    the `---`/`+++` lines decide, as before.
+    """
+    rest = line[len("diff --git "):]
+    if not rest.startswith("a/") or (len(rest) - 5) % 2:
+        return None
+    n = (len(rest) - 5) // 2
+    p = rest[2:2 + n]
+    return p if rest[2 + n:] == " b/" + p else None
+
+
 def parse_diff(text):
-    """Unified diff -> [{path, hunks: [{header, lines}]}]."""
+    """Unified diff -> [{path, hunks: [{header, lines}], note}].
+
+    `note` describes a file with no hunks: a binary change, a mode change,
+    or a new or deleted empty file. Those have no `---`/`+++` lines, and
+    taking the path only from them dropped the file and reported
+    "no changes".
+    """
     files = []
     cur = None
     hunk = None
     for line in text.splitlines():
         if line.startswith("diff --git "):
-            cur = {"path": None, "hunks": []}
+            cur = {"path": _header_path(line), "hunks": [], "notes": []}
             hunk = None
+            old_mode = None
             files.append(cur)
-        elif line.startswith("--- ") and cur is not None:
+        elif hunk is None and cur is not None and line.startswith(
+                ("new file mode ", "deleted file mode ", "old mode ",
+                 "new mode ", "Binary files ")):
+            if line.startswith("new file mode "):
+                cur["notes"].append("new file")
+            elif line.startswith("deleted file mode "):
+                cur["notes"].append("deleted")
+            elif line.startswith("old mode "):
+                old_mode = line[len("old mode "):]
+            elif line.startswith("new mode "):
+                cur["notes"].append("mode %s → %s" % (
+                    old_mode, line[len("new mode "):]))
+            else:
+                cur["notes"].append("binary")
+        # Headers only before the first hunk: inside one, a removed line
+        # `-- x` reads `--- x` and is content, not a file header.
+        elif hunk is None and line.startswith("--- ") and cur is not None:
             if cur["path"] is None and line != "--- /dev/null":
                 cur["path"] = line[4:].split("\t")[0][2:]  # strip a/
-        elif line.startswith("+++ ") and cur is not None:
+        elif hunk is None and line.startswith("+++ ") and cur is not None:
             if line != "+++ /dev/null":
                 cur["path"] = line[4:].split("\t")[0][2:]  # strip b/
         elif line.startswith("@@") and cur is not None:
@@ -313,6 +366,18 @@ def _hunk_counts(f):
     return plus, minus
 
 
+def _file_row(f, plus, minus):
+    """`path (2 hunks, +3 -1)`, or `path (binary)` for a hunk-less file."""
+    notes = list(f.get("notes", ()))
+    if f["hunks"]:
+        notes.append("%d hunk%s, +%d -%d" % (
+            len(f["hunks"]), "" if len(f["hunks"]) == 1 else "s",
+            plus, minus))
+    elif notes in (["new file"], ["deleted"]):
+        notes.append("empty")
+    return "%s (%s)" % (f["path"], ", ".join(notes) or "no textual change")
+
+
 def view_hunks(paths, budget):
     if not _head_exists():
         raise GitbriefError("no commits yet; nothing to diff against")
@@ -323,16 +388,19 @@ def view_hunks(paths, budget):
     if not files:
         return ["no changes" + (" in %s" % ", ".join(paths)
                                 if paths else "")]
+    return _files_view(files, [], budget)
+
+
+def _files_view(files, head, budget):
+    """Per-file hunks for parsed diff `files`, under `head` lines, with the
+    hunks ladder: full, changed lines, headers, counts, then the floor."""
 
     def floor():
         # One line per file is still O(files): a vendoring or line-ending
         # commit touching thousands ignored the budget at the last rung.
         # Keep the head of the list and total the rest.
         counts = [_hunk_counts(f) for f in files]
-        rows = ["%s (%d hunk%s, +%d -%d)"
-                % (f["path"], len(f["hunks"]),
-                   "" if len(f["hunks"]) == 1 else "s", p, m)
-                for f, (p, m) in zip(files, counts)]
+        rows = [_file_row(f, p, m) for f, (p, m) in zip(files, counts)]
         suffix = [(0, 0)] * (len(files) + 1)   # (+, -) of files[k:]
         for k in range(len(files) - 1, -1, -1):
             suffix[k] = (suffix[k + 1][0] + counts[k][0],
@@ -347,23 +415,21 @@ def view_hunks(paths, budget):
         def size(line):             # bytes, as _est counts them
             return len(line.encode("utf-8", "replace")) + 1
 
-        used = 0
+        used = sum(size(h) for h in head)
         for k, row in enumerate(rows):
             if k and (used + size(row) + size(rest(k + 1))) // 4 > budget:
-                return rows[:k] + [rest(k)]
+                return head + rows[:k] + [rest(k)]
             used += size(row)
-        return rows + ["(reduced for --max-tokens: per-file counts only)"]
+        return head + rows + [
+            "(reduced for --max-tokens: per-file counts only)"]
 
     def render(level):
         # level 0: full 1-context hunks; 1: changed lines only;
         # 2: hunk headers only; 3: per-file hunk counts only
-        lines = []
+        lines = list(head)
         for f in files:
             plus, minus = _hunk_counts(f)
-            lines.append("%s (%d hunk%s, +%d -%d)"
-                         % (f["path"], len(f["hunks"]),
-                            "" if len(f["hunks"]) == 1 else "s",
-                            plus, minus))
+            lines.append(_file_row(f, plus, minus))
             if level >= 3:
                 continue
             for h in f["hunks"]:
@@ -386,6 +452,12 @@ def view_hunks(paths, budget):
 
 
 def view_show(path, budget):
+    """The diff of one file against HEAD, or, when `path` names no file but
+    does name a commit, that commit's hunks.
+
+    An empty diff used to mean "no changes in X" whatever X was, so a
+    commit SHA or a mistyped path read as a definite, wrong statement.
+    """
     if not _head_exists():
         raise GitbriefError("no commits yet; nothing to diff against")
     out = _git("diff", "HEAD", "--no-renames", *_PATCH_FLAGS, "--", path)
@@ -394,11 +466,39 @@ def view_show(path, budget):
         if any(e["path"] == _root_relative(path) for e in st["untracked"]):
             raise GitbriefError("%s is untracked; gitbrief show diffs "
                                 "tracked files (read it with xread)" % path)
-        return ["no changes in %s" % path]
+        if os.path.exists(path) or _git("ls-files", "--", path).strip():
+            return ["no changes in %s" % path]
+        rev = _git("rev-parse", "--verify", "-q", path + "^{commit}",
+                   ok_codes=(0, 1)).strip()
+        if rev:
+            return view_commit(rev, budget)
+        raise GitbriefError("%s: no such file in the repo or working tree, "
+                            "and not a commit" % path)
     full = out.splitlines()
     if not budget or _est(full) <= budget:
         return full
     return view_hunks([path], budget)  # too big: degrade to hunks view
+
+
+def view_commit(rev, budget):
+    """One commit's hunks against its first parent (a root commit against
+    nothing), under a `commit <sha> <subject>` line. Any branch: the
+    commit need not be reachable from HEAD."""
+    head = ["commit " + _git("log", "-1", "--format=%h %s (%an)",
+                             rev).strip()]
+    parents = _git("rev-list", "--parents", "-n", "1", rev).split()[1:]
+    if parents:
+        diff = _git("diff", parents[0], rev, "-U1", "--no-renames",
+                    *_PATCH_FLAGS)
+    else:
+        diff = _git("show", "--format=", "-U1", "--no-renames",
+                    *_PATCH_FLAGS, rev)
+    if len(parents) > 1:
+        head.append("(merge: diffed against its first parent)")
+    files = parse_diff(diff)
+    if not files:
+        return head + ["no changes"]
+    return _files_view(files, head, budget)
 
 
 # --------------------------------------------------------------------- log
@@ -677,16 +777,20 @@ def view_pr(base, budget):
         raise GitbriefError("unknown base revision: %s" % base)
     merge_base = _git("merge-base", base, "HEAD").strip()
     stats = _numstat(merge_base, "HEAD")
-    commits = gather_commits(1000, rev_range="%s..HEAD" % merge_base)
+    # The count comes from rev-list: the listing is capped at 1000, and
+    # its length was printed as the total, so a long branch said 1000.
+    total = int(_git("rev-list", "--count", "%s..HEAD" % merge_base))
+    commits = gather_commits(PR_LIST_LIMIT,
+                             rev_range="%s..HEAD" % merge_base)
     paths = sorted(stats)
     symbols, skipped = changed_symbols(merge_base, paths)
 
     def render(n_commits, per_file, with_symbols):
         lines = ["pr vs %s (merge-base %s)" % (base, merge_base[:7])]
-        lines += ["", "commits (%d):" % len(commits)]
+        lines += ["", "commits (%d):" % total]
         lines += ["  " + c for c in commits[:n_commits]]
-        if n_commits < len(commits):
-            lines.append("  (… %d more)" % (len(commits) - n_commits))
+        if n_commits < total:
+            lines.append("  (… %d more)" % (total - n_commits))
         plus = sum(v[0] for v in stats.values())
         minus = sum(v[1] for v in stats.values())
         lines += ["", "diffstat (%d file%s, +%d -%d):"
@@ -749,8 +853,9 @@ def main(argv=None):
                              help="diff hunks at 1 context line")
     p_hunks.add_argument("paths", nargs="*", metavar="FILE")
     p_show = sub.add_parser("show", parents=[common],
-                            help="full diff for one file")
-    p_show.add_argument("path", metavar="FILE")
+                            help="full diff for one file, or one commit's "
+                                 "hunks (FILE wins if both exist)")
+    p_show.add_argument("path", metavar="FILE|COMMIT")
     p_log = sub.add_parser("log", parents=[common],
                            help="condensed history")
     p_log.add_argument("-n", type=int, default=LOG_DEFAULT_N, metavar="N")

@@ -464,3 +464,129 @@ def test_ts_symbols_count_code_after_a_closing_template_backtick():
     syms = gitbrief._ts_symbols(src)
     assert [(s["name"], s["start"], s["end"]) for s in syms] == [
         ("first", 1, 8), ("second", 9, 11)]
+
+
+# ------------------------------------------------ v0.6.0 review fixes
+
+from conftest import write  # noqa: E402
+
+
+def _plain_repo(tmp_path):
+    from conftest import commit_file
+    work = tmp_path / "plain"
+    work.mkdir()
+    g(work, "init", "-b", "main")
+    commit_file(work, "a.txt", "one\n", "base")
+    return work
+
+
+def test_hunks_reports_binary_and_header_only_changes(tmp_path, monkeypatch,
+                                                      capsys):
+    """These have no ---/+++ lines; the file was dropped and the whole
+    diff reported "no changes"."""
+    work = _plain_repo(tmp_path)
+    (work / "logo.bin").write_bytes(b"\0\1\2")
+    (work / "empty.txt").write_text("")
+    g(work, "add", "logo.bin", "empty.txt")
+    g(work, "update-index", "--chmod=+x", "a.txt")
+    monkeypatch.chdir(work)
+    out = ok(["hunks"], capsys)
+    assert "no changes" not in out
+    assert "logo.bin (new file, binary)" in out
+    assert "empty.txt (new file, empty)" in out
+    assert "a.txt (mode 100644 → 100755)" in out
+
+
+def test_hunks_path_with_spaces_from_header(tmp_path, monkeypatch, capsys):
+    work = _plain_repo(tmp_path)
+    (work / "my file.txt").write_text("")
+    g(work, "add", "my file.txt")
+    monkeypatch.chdir(work)
+    assert "my file.txt (new file, empty)" in ok(["hunks"], capsys)
+
+
+def test_removed_line_starting_with_dashes_is_content(tmp_path, monkeypatch,
+                                                      capsys):
+    from conftest import commit_file
+    work = _plain_repo(tmp_path)
+    commit_file(work, "sql.txt", "-- comment\nselect 1;\n", "sql")
+    write(work, "sql.txt", "select 1;\n")
+    monkeypatch.chdir(work)
+    out = ok(["hunks"], capsys)
+    assert "sql.txt (1 hunk, +0 -1)" in out
+    assert "  --- comment" in out
+
+
+def test_show_commit_sha_shows_that_commit(tmp_path, monkeypatch, capsys):
+    from conftest import commit_file
+    work = _plain_repo(tmp_path)
+    g(work, "checkout", "-b", "side")
+    commit_file(work, "b.txt", "bee\n", "side change")
+    sha = g(work, "rev-parse", "--short", "HEAD").strip()
+    g(work, "checkout", "main")      # not reachable from HEAD
+    monkeypatch.chdir(work)
+    out = ok(["show", sha], capsys)
+    assert out.splitlines()[0].startswith("commit %s side change" % sha)
+    assert "b.txt (new file, 1 hunk, +1 -0)" in out
+    assert "+bee" in out
+
+
+def test_show_root_commit(tmp_path, monkeypatch, capsys):
+    work = _plain_repo(tmp_path)
+    monkeypatch.chdir(work)
+    out = ok(["show", "HEAD"], capsys)
+    assert "a.txt (new file, 1 hunk, +1 -0)" in out
+
+
+def test_show_missing_path_is_an_error(tmp_path, monkeypatch, capsys):
+    work = _plain_repo(tmp_path)
+    monkeypatch.chdir(work)
+    code, out, err = run(["show", "nosuchfile.py"], capsys)
+    assert code == 2
+    assert "no such file" in err and out == ""
+
+
+def test_show_unchanged_tracked_file_still_says_no_changes(tmp_path,
+                                                          monkeypatch,
+                                                          capsys):
+    work = _plain_repo(tmp_path)
+    monkeypatch.chdir(work)
+    assert ok(["show", "a.txt"], capsys).strip() == "no changes in a.txt"
+
+
+def test_log_git_error_is_not_no_matching_commits(tmp_path, monkeypatch,
+                                                  capsys):
+    work = _plain_repo(tmp_path)
+    monkeypatch.chdir(work)
+    code, out, err = run(["log", "--author", "["], capsys)
+    assert code == 2, out
+    assert "no matching commits" not in out
+
+
+def test_log_on_unborn_branch_still_says_no_commits(tmp_path, monkeypatch,
+                                                    capsys):
+    work = tmp_path / "unborn"
+    work.mkdir()
+    g(work, "init", "-b", "main")
+    monkeypatch.chdir(work)
+    assert ok(["log"], capsys).strip() == "no matching commits"
+
+
+def test_pr_counts_commits_past_the_listing_cap(tmp_path, monkeypatch,
+                                                capsys):
+    work = _plain_repo(tmp_path)
+    g(work, "checkout", "-b", "feature")
+    for n in range(8):
+        g(work, "commit", "--allow-empty", "-q", "-m", "c%d" % n)
+    monkeypatch.setattr(gitbrief, "PR_LIST_LIMIT", 5)
+    monkeypatch.chdir(work)
+    out = ok(["pr", "main", "--max-tokens", "0"], capsys)
+    assert "commits (8):" in out
+    assert "(… 3 more)" in out
+
+
+def test_default_view_announces_dropped_file_lists(repo, monkeypatch,
+                                                   capsys):
+    monkeypatch.chdir(repo)
+    out = ok(["--max-tokens", "60"], capsys)
+    assert "dropped for --max-tokens 60" in out
