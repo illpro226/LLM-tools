@@ -644,3 +644,72 @@ def test_dash_n_is_accepted_as_a_no_op(capsys):
     code, out, _ = run(["-n"] + rg_args(), capsys)
     code2, out2, _ = run(rg_args(), capsys)
     assert code == code2 == 0 and out == out2
+
+
+# ------------------------------------------------ v0.7.0 review fixes
+
+@pytest.mark.parametrize("toml,msg", [
+    ('[weights]\nsrc = "high"\n', "weights.src must be a number"),
+    ("[weights]\nsrc = true\n", "weights.src must be a number"),
+    ('[classes]\ngenerated = "dist/*"\n', "classes.generated must be a list"),
+    ("[classes]\ntests = [1]\n", "classes.tests must be a list"),
+])
+def test_config_value_types_are_checked(tmp_path, toml, msg):
+    cfg = tmp_path / "s.toml"
+    cfg.write_text(toml, encoding="utf-8")
+    with pytest.raises(sgrep.SgrepError) as exc:
+        sgrep.load_config(str(cfg))
+    assert msg in str(exc.value)
+
+
+def _tally_log(tmp_path, n=13):
+    p = tmp_path / "dev.log"
+    p.write_text("".join(" PATCH /api/v1/sermons/%d %d in 5ms\n"
+                         % (i, 500 if i % 4 == 0 else 200)
+                         for i in range(n)), encoding="utf-8")
+    return str(p)
+
+
+@needs_rg
+def test_plain_prints_every_row_without_headers(tmp_path, capsys):
+    """Collapsed output piped to `sort | uniq -c` read 7 for 13 lines."""
+    log = _tally_log(tmp_path)
+    code, out, _ = run(["--rg", RG, "--plain", "PATCH", log], capsys)
+    rows = out.splitlines()
+    assert code == 0 and len(rows) == 13
+    assert all(re.match(r"^.+:\d+: PATCH ", r) for r in rows), rows[:2]
+    assert not any(r.startswith("==") or "more similar" in r for r in rows)
+
+
+@needs_rg
+def test_plain_refuses_rather_than_drops_rows(tmp_path, capsys):
+    log = _tally_log(tmp_path)
+    code, out, err = run(["--rg", RG, "--plain", "--max-tokens", "20",
+                          "PATCH", log], capsys)
+    assert code == 2 and out == ""
+    assert "never drops rows" in err
+
+
+@needs_rg
+def test_plain_keeps_rows_past_the_per_file_store_cap(tmp_path, capsys):
+    n = sgrep.MAX_STORED + 5
+    log = _tally_log(tmp_path, n)
+    code, out, _ = run(["--rg", RG, "--plain", "--max-tokens", "0",
+                        "PATCH", log], capsys)
+    assert code == 0 and len(out.splitlines()) == n
+
+
+def test_plain_rejects_list_modes(capsys):
+    with pytest.raises(SystemExit) as exc:
+        sgrep.main(["--plain", "--files-only", "x"])
+    assert exc.value.code == 2
+
+
+@needs_rg
+def test_output_lines_end_in_lf_on_every_platform():
+    """Text-mode stdout wrote \r\n on Windows; `$(sgrep --files-only)`
+    then kept a \r on every path but the last."""
+    proc = subprocess.run([sys.executable, SGREP, "--rg", RG, "--files-only",
+                           "needle", TREE], capture_output=True)
+    assert proc.returncode == 0
+    assert b"\r" not in proc.stdout and proc.stdout.count(b"\n") >= 2

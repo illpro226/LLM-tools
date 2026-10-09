@@ -667,7 +667,9 @@ def check_shell(tool: str, raw_command: str) -> None:
             command,
             "Raw grep/rg over files dumps unbudgeted lines. Use "
             "`sgrep PATTERN [PATH]` — start with --files-only or "
-            "--counts-only, then narrow. (Filtering another command's "
+            "--counts-only, then narrow. As a pipe stage (`| sort | uniq "
+            "-c`), use `sgrep --plain`: grep-style rows with no headers or "
+            "fold markers. (Filtering another command's "
             "output with `| grep` is allowed and was not matched here; so "
             "is a search whose stdout goes to a file or through "
             "head/tail/wc, which costs no tokens.)")

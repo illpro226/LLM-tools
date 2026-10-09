@@ -1,6 +1,8 @@
 # sgrep: a mistyped .sgrep.toml value tracebacks or is misread
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session. Minor.
+**RESOLVED 2026-10-09 (sgrep v0.7.0).** Weights must be numbers and classes lists of strings; both are exit-2 config errors.
+
+Filed 2026-10-08 from a full-suite review session. Minor.
 
 ## What broke
 

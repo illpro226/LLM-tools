@@ -1,5 +1,24 @@
 # sgrep Changelog
 
+- 2026-10-09: v0.7.0 — fixes for three known issues, each pinned by a
+  test that fails on v0.6.0.
+  **Piped into `sort | uniq -c`, collapsed output gave wrong counts**: a
+  13-line tally read 7, the fold marker and the file header counted as
+  data rows. New `--plain` prints grep-style `path:line:text` rows, every
+  match in path order, with no headers or markers. It keeps the default
+  budget but refuses (exit 2) rather than drop a row, so a count is
+  whole or absent; `--max-tokens 0` when piping a large result.
+  Making output raw whenever stdout is not a TTY, as the issue proposed,
+  would have switched collapsing off for every agent call, since an
+  agent's stdout is always a pipe.
+  **`--files-only` paths ended in `\r\n` on Windows**, so `$(sgrep ...)`
+  kept a `\r` on every path but the last. stdout now writes `\n`.
+  **A mistyped `.sgrep.toml` tracebacked or was misread**:
+  `src = "high"` raised ValueError, and `generated = "dist/*"` became six
+  one-character globs whose `*` matched everything. Both are now exit-2
+  config errors. (The Windows reserved-name abort, filed 2026-09-26, was
+  already fixed by v0.5.0's partial-failure handling; verified and
+  archived.) 9 new tests (51 total).
 - 2026-09-24: v0.6.0 — collapsing no longer hides distinct lines.
   A file with more than 5 matches showed at most 3 cluster representatives
   under a "(+N more similar)" footer, even when the rest were different

@@ -1,6 +1,8 @@
 # sgrep --files-only ends each path with CRLF on Windows, so a shell loop over it gets paths that do not exist
 
-**STATUS: open.** Filed 2026-10-06 from a bible-atlas session.
+**RESOLVED 2026-10-09 (sgrep v0.7.0).** stdout is reconfigured with `newline="\n"`.
+
+Filed 2026-10-06 from a bible-atlas session.
 
 ## What happened
 

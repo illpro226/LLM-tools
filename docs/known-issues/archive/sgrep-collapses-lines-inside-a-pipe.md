@@ -1,6 +1,8 @@
 # sgrep collapses similar lines even when its output is piped, corrupting counts
 
-**STATUS: open.** Filed 2026-09-30 from a bible-atlas session.
+**RESOLVED 2026-10-09 (sgrep v0.7.0).** New `--plain`: grep-style rows, every match, no headers or markers, refusing rather than dropping rows over budget. Not raw-when-not-a-TTY: an agent's stdout is always a pipe, so that would end collapsing for every agent call. The guard hook's grep message now names `sgrep --plain` for pipe stages.
+
+Filed 2026-09-30 from a bible-atlas session.
 
 ## What happened
 

@@ -28,7 +28,7 @@ import subprocess
 import sys
 import threading
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 SHOW_ALL_LIMIT = 5    # files with <= this many matching lines show them all
 REPRESENTATIVES = 3   # distinct lines shown when a file exceeds the limit
@@ -83,9 +83,21 @@ def load_config(path):
             if key not in weights:
                 raise SgrepError("config %s: unknown class %r (expected "
                                  "src/tests/generated)" % (path, key))
+            # bool is an int subclass; `src = true` is a typo, not 1.0
+            if isinstance(value, bool) or not isinstance(value,
+                                                          (int, float)):
+                raise SgrepError("config %s: weights.%s must be a number, "
+                                 "not %r" % (path, key, value))
             weights[key] = float(value)
         for key in extra:
-            extra[key] = list(cfg.get("classes", {}).get(key, []))
+            value = cfg.get("classes", {}).get(key, [])
+            # A bare string is iterable: list("dist/*") was six one-char
+            # globs, and the `*` among them matched every path.
+            if not isinstance(value, list) or not all(
+                    isinstance(v, str) for v in value):
+                raise SgrepError("config %s: classes.%s must be a list of "
+                                 "glob strings, not %r" % (path, key, value))
+            extra[key] = list(value)
     return weights, extra
 
 
@@ -106,11 +118,13 @@ def classify(path, extra):
 
 # ----------------------------------------------------------------- parsing
 
-def parse_stream(lines):
+def parse_stream(lines, store_all=False):
     """Consume an `rg --json` event stream incrementally.
 
     Returns {path: {"count", "matches": [(line, text)], "contexts": {line:
     text}}}; a match is one matching line (rg emits one event per line).
+    `store_all` lifts the per-file MAX_STORED cap (--plain prints every
+    row, and a capped list would corrupt a downstream count).
     """
     files = {}
     for raw in lines:
@@ -140,14 +154,14 @@ def parse_stream(lines):
         line = data["line_number"]
         if kind == "match":
             entry["count"] += 1
-            if len(entry["matches"]) < MAX_STORED:
+            if store_all or len(entry["matches"]) < MAX_STORED:
                 entry["matches"].append((line, text))
         elif len(entry["contexts"]) < MAX_STORED * 2:
             entry["contexts"][line] = text
     return files
 
 
-def run_rg(rg_bin, argv_tail):
+def run_rg(rg_bin, argv_tail, store_all=False):
     """Returns (files, errors): `errors` is rg's complaint when it failed on
     some paths but still found matches in others, else "".
 
@@ -180,7 +194,7 @@ def run_rg(rg_bin, argv_tail):
 
     reader = threading.Thread(target=drain, daemon=True)
     reader.start()
-    files = parse_stream(proc.stdout)
+    files = parse_stream(proc.stdout, store_all)
     code = proc.wait()
     reader.join()
     stderr = "\n".join(err["lines"]).strip()
@@ -445,6 +459,13 @@ def main(argv=None):
                              "representative per near-identical cluster; "
                              "for \"edit each of these\" work. Still bounded "
                              "by --max-tokens")
+    parser.add_argument("--plain", action="store_true",
+                        help="grep-style path:line:text rows, every match "
+                             "in path order, no headers or fold markers: a "
+                             "pipe stage for sort/uniq/awk. Over "
+                             "--max-tokens it refuses (exit 2) rather than "
+                             "drop rows; pass --max-tokens 0 when piping a "
+                             "large result")
     parser.add_argument("--max-tokens", type=int, metavar="N",
                         default=DEFAULT_MAX_TOKENS,
                         help="cap output; reduces context, then matches per "
@@ -457,6 +478,9 @@ def main(argv=None):
     parser.add_argument("--version", action="version",
                         version="sgrep %s" % __version__)
     args = parser.parse_args(argv)
+    if args.plain and (args.files_only or args.counts_only or args.context):
+        parser.error("--plain prints every match line; it does not combine "
+                     "with --files-only, --counts-only or -C")
 
     tail = []
     if args.ignore_case:
@@ -475,17 +499,33 @@ def main(argv=None):
 
     try:
         weights, extra = load_config(args.config)
-        files, rg_errors = run_rg(args.rg, tail)
+        files, rg_errors = run_rg(args.rg, tail, store_all=args.plain)
     except SgrepError as exc:
         print("sgrep: %s" % exc, file=sys.stderr)
         return 2
     if not files:
         return 1
 
-    ranked = rank(files, weights, extra)
-    lines = apply_budget(ranked, files, args)
+    if args.plain:
+        # Folding and headers became data rows in `| sort | uniq -c`: a
+        # 13-line tally read 7. These rows are whole or not printed at all.
+        lines = ["%s:%d:%s" % (path, ln, text) for path in sorted(files)
+                 for ln, text in files[path]["matches"]]
+        if args.max_tokens and _tokens_of(lines) > args.max_tokens:
+            print("sgrep: --plain: %d match lines are ~%d tokens (budget "
+                  "%d); --plain never drops rows - narrow the search, or "
+                  "pass --max-tokens 0 when piping it"
+                  % (len(lines), _tokens_of(lines), args.max_tokens),
+                  file=sys.stderr)
+            return 2
+    else:
+        ranked = rank(files, weights, extra)
+        lines = apply_budget(ranked, files, args)
     try:  # echo matched lines byte-faithfully, not via a cp1252 console default
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        # newline="\n": a text-mode stdout wrote \r\n on Windows, and every
+        # --files-only path but the last kept a \r in `$(sgrep ...)`.
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace",
+                               newline="\n")
     except (AttributeError, ValueError):
         pass
     print("\n".join(lines))

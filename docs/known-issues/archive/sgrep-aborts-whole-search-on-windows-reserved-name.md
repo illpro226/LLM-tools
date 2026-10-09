@@ -1,5 +1,7 @@
 # sgrep: one Windows reserved-name file aborts the whole search
 
+**RESOLVED (sgrep v0.5.0, verified 2026-10-09).** v0.5.0 already kept the matches when rg fails on some paths: they print, rg's error goes to stderr, and the exit is 2. Re-run on a tree holding a real `nul` file: both matching files listed, the `nul` error reported. The session that filed this was likely on an older install.
+
 **Date:** 2026-09-26
 **Tool:** sgrep (`--files-only`)
 

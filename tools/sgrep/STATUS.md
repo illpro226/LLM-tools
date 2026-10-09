@@ -1,9 +1,12 @@
 # sgrep Status
 
-Implemented (v0.5.0) and passing tests.
+Implemented (v0.7.0) and passing tests.
 
 - `sgrep.py` — single-file CLI covering all PRD modes: condensed ranked
-  digest, `--files-only`, `--counts-only`, `--no-collapse`,
+  digest, `--files-only`, `--counts-only`, `--no-collapse`, `--plain`
+  (grep-style `path:line:text` rows for a pipe stage: every match, no
+  headers or fold markers; over budget it refuses with exit 2 rather
+  than drop rows),
   `--max-tokens` (ADR-003 order:
   context lines → matches per file → files shown, converging to counts).
 - Wraps `rg --json --sort path` (ADR-001); binary resolved from PATH,
@@ -16,9 +19,12 @@ Implemented (v0.5.0) and passing tests.
   announces itself when it caps.
 - Ranking: match count × path-class weight (src 1.0 / tests 0.5 /
   generated 0.2), overridable via `.sgrep.toml` (`[weights]`, extra
-  `[classes]` fnmatch patterns); ties break by path.
+  `[classes]` fnmatch patterns, which must be lists of strings; weights
+  must be numbers); ties break by path.
 - `--max-tokens` defaults to 1500 rather than unbounded (docs/decisions/0005);
   `--max-tokens 0` restores unbounded output.
+- Output lines end in `\n` on every platform (a Windows text-mode
+  stdout wrote `\r\n`, which broke `$(sgrep --files-only)` loops).
 - Output format: match lines carry `path:line:`; `-C` context lines carry a
   bare right-aligned line number under the block header that names the file
   (INVARIANTS.md). Measured -23% output on context searches, and the reason
@@ -33,9 +39,9 @@ Implemented (v0.5.0) and passing tests.
 - The file-count budget rung is a binary search, so a 20,000-file search
   fits the default budget in ~3 s rather than ~8 minutes; `--files-only`
   announces files the budget cut with the digest's `(+N more files …)`.
-- Tests: `tests/test_sgrep.py` (40 tests) — parser/dedupe/rank/budget
+- Tests: `tests/test_sgrep.py` (51 tests) — parser/dedupe/rank/budget
   against canned `rg --json` streams in `tests/fixtures/rg-output/`;
-  7 end-to-end tests run against real ripgrep and skip when absent.
+  15 end-to-end tests run against real ripgrep and skip when absent.
 
 Not done / later: no packaging or PATH install story; stored matches capped
 at 200/file (count keeps rising); budgets under ~32 tokens are unsatisfiable
