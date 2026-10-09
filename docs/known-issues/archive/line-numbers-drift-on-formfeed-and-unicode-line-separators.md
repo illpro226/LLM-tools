@@ -1,6 +1,8 @@
 # Line numbers drift on form feeds and Unicode line separators
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session.
+**RESOLVED 2026-10-09 (xread v0.6.0, repomap v0.5.0, repoindex v0.1.7, codediff v0.6.1, gitbrief v0.4.1).** Every listed site splits on `\r\n|\r|\n`, each pinned by a form-feed test. The helper is still one copy per tool (single-file tools); the shared-code suggestion stays in STATUS.md Next.
+
+Filed 2026-10-08 from a full-suite review session.
 Affects xread (confirmed). The same pattern is in repomap, codediff,
 gitbrief `pr`, and repoindex (not separately reproduced).
 

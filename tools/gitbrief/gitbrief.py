@@ -27,7 +27,7 @@ import re
 import subprocess
 import sys
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 # ADR-006: the token cap is on by default. `hunks` on a large working diff
 # is exactly the call that floods a context window, and it is never the
@@ -43,6 +43,19 @@ TS_EXTS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"}
 
 class GitbriefError(Exception):
     pass
+
+
+_NEWLINE = re.compile(r"\r\n|\r|\n")
+
+
+def _split_lines(text):
+    """Lines as ast, git and editors number them. str.splitlines() also
+    breaks on form feeds, \\x1c-\\x1e, \\x85 and U+2028/U+2029, so after a
+    form-feed page break every later line number was off by one."""
+    lines = _NEWLINE.split(text)
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
 
 
 def _est(lines):
@@ -322,7 +335,7 @@ def parse_diff(text):
     files = []
     cur = None
     hunk = None
-    for line in text.splitlines():
+    for line in _split_lines(text):
         if line.startswith("diff --git "):
             cur = {"path": _header_path(line), "hunks": [], "notes": []}
             hunk = None
@@ -474,7 +487,7 @@ def view_show(path, budget):
             return view_commit(rev, budget)
         raise GitbriefError("%s: no such file in the repo or working tree, "
                             "and not a commit" % path)
-    full = out.splitlines()
+    full = _split_lines(out)
     if not budget or _est(full) <= budget:
         return full
     return view_hunks([path], budget)  # too big: degrade to hunks view
@@ -615,7 +628,7 @@ def _ts_symbols(source):
     stack = []  # open top-level declarations: (symbol, open_depth)
     depth = 0
     state = {"comment": False, "template": False}
-    lines = source.splitlines()
+    lines = _split_lines(source)
     for i, raw in enumerate(lines, 1):
         if state["template"]:
             close = _template_close(raw)
@@ -722,7 +735,7 @@ def _changed_ranges_many(base, paths, chunk=100):
         text = _git("diff", "-U0", "--no-renames", *_PATCH_FLAGS, base,
                     "HEAD", "--", *paths[i:i + chunk])
         cur, in_header = None, False
-        for line in text.splitlines():
+        for line in _split_lines(text):
             if line.startswith("diff --git "):
                 cur, in_header = None, True
             elif in_header and line.startswith(("--- a/", "+++ b/")):

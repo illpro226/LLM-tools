@@ -1,5 +1,10 @@
 # codediff Changelog
 
+- 2026-10-09: v0.6.1 — **a form feed misplaced changes.** Sources were
+  split with `str.splitlines()`, which also breaks on `\f` and U+2028,
+  while ast numbers lines by newlines only; an edit inside `f()` below a
+  form-feed page break read as `module-level code changed` two lines
+  down. Lines now split on newlines only. 1 new test (70 total).
 - 2026-10-09: v0.6.0 — fixes for four known issues from the 2026-10-08
   review, each pinned by a test that fails on v0.5.0.
   **An endpoint swap read as a comment edit.** The JS/TS/Go "comment-only"

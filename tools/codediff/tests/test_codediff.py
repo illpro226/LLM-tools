@@ -656,3 +656,15 @@ def test_broken_index_is_a_note_not_a_traceback(repo):
     proc = run(repo, "--no-update")
     assert proc.returncode == 0, proc.stderr
     assert "test-coverage flags unavailable" in proc.stdout
+
+
+def test_form_feed_does_not_misplace_a_body_change(tmp_path):
+    """str.splitlines() broke on the form feed, so ast's line numbers
+    indexed the wrong lines: f's edit read as module-level code at :6."""
+    work = _tiny_repo(tmp_path, {
+        "m.py": "import os\n\x0c\ndef f():\n    x = 1\n    return x\n"})
+    write(work, "m.py", "import os\n\x0c\ndef f():\n    x = 1\n"
+                        "    return x + 1\n")
+    doc = run_json(work)
+    assert [(e["text"], e["line"]) for e in doc["behavior"]] == [
+        ("~ f()  body changed", 3)]

@@ -590,3 +590,14 @@ def test_default_view_announces_dropped_file_lists(repo, monkeypatch,
     monkeypatch.chdir(repo)
     out = ok(["--max-tokens", "60"], capsys)
     assert "dropped for --max-tokens 60" in out
+
+
+def test_hunks_keep_a_line_holding_a_form_feed_whole(tmp_path, monkeypatch,
+                                                     capsys):
+    from conftest import commit_file
+    work = _plain_repo(tmp_path)
+    commit_file(work, "ff.txt", "a\x0cb\n", "ff")
+    write(work, "ff.txt", "a\x0cc\n")
+    monkeypatch.chdir(work)
+    out = ok(["hunks"], capsys)
+    assert "  -a\x0cb" in out and "  +a\x0cc" in out

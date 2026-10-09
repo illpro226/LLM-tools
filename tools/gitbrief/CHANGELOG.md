@@ -1,5 +1,10 @@
 # gitbrief Changelog
 
+- 2026-10-09: v0.4.1 — **a form feed split a diff line in two.** Diff
+  output and `pr`'s JS/TS sources were split with `str.splitlines()`,
+  which also breaks on `\f` and U+2028: `-a<FF>b` printed as `-a` and
+  the rest was dropped, and symbol line numbers after one shifted.
+  Lines now split on newlines only. 1 new test (48 total).
 - 2026-10-09: v0.4.0 — fixes for six known issues, each pinned by a test
   that fails on v0.3.0.
   **`show` said "no changes" for anything that was not a changed file.**

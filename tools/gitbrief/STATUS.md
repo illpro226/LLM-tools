@@ -1,6 +1,6 @@
 # gitbrief Status
 
-Implemented (v0.4.0) and passing tests.
+Implemented (v0.4.1) and passing tests.
 
 - `gitbrief.py` — single-file, stdlib-only CLI over subprocess `git`
   plumbing (`status --porcelain=v2 --branch`, `diff --numstat`,
@@ -16,7 +16,8 @@ Implemented (v0.4.0) and passing tests.
   (merge-base diffstat, exact commit count, changed top-level symbols).
 - Binary, mode-only and empty new/deleted files appear in `hunks` and
   `show COMMIT` as `path (new file, binary)` etc. The path comes from the
-  `diff --git` header, not only from `---`/`+++`.
+  `diff --git` header, not only from `---`/`+++`. Diff text and sources
+  split on newlines only, so a form feed stays inside its line.
 - `pr` changed symbols come from stdlib extraction of the before/after
   blobs for Python (`ast`) and JS/TS (brace scanner), classified
   +added / ~modified / -removed by diff-range intersection — ADR-005,
@@ -39,7 +40,7 @@ Implemented (v0.4.0) and passing tests.
   `--max-tokens 0` restores unbounded output.
 - git discovery is bounded by `GIT_CEILING_DIRECTORIES`, defaulted to
   `$HOME` (ADR-007); `GITBRIEF_NO_CEILING=1` overrides.
-- Tests: `tests/test_gitbrief.py` (47 tests) against temp repos scripted
+- Tests: `tests/test_gitbrief.py` (48 tests) against temp repos scripted
   by the suite (upstream drift via a local bare remote, staged + unstaged
   + untracked with exact counts, feature branch with known symbol edits);
   host git config is neutralized. A repo-state snapshot asserts every

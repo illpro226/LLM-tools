@@ -45,7 +45,7 @@ try:
 except ImportError:  # pragma: no cover - Python < 3.11
     tomllib = None
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 
 # ADR-007: the token cap is on by default. A pre-commit summary is read
 # while the context already holds the work that produced the diff, so it
@@ -93,6 +93,19 @@ _DEPRECATED_RE = re.compile(r"deprecat", re.IGNORECASE)
 
 class CodediffError(Exception):
     pass
+
+
+_NEWLINE = re.compile(r"\r\n|\r|\n")
+
+
+def _split_lines(text):
+    """Lines as ast, git and editors number them. str.splitlines() also
+    breaks on form feeds, \\x1c-\\x1e, \\x85 and U+2028/U+2029, so after a
+    form-feed page break every later line number was off by one."""
+    lines = _NEWLINE.split(text)
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
 
 
 # ------------------------------------------------------------- plumbing ---
@@ -425,8 +438,8 @@ def _display(name, sym):
 
 def _mechanical_kind(before_src, after_src, ef_b, ef_a, lang):
     """'formatting/comment-only', 'imports reshuffled', or None."""
-    b_lines = [l.strip() for l in before_src.splitlines()]
-    a_lines = [l.strip() for l in after_src.splitlines()]
+    b_lines = [l.strip() for l in _split_lines(before_src)]
+    a_lines = [l.strip() for l in _split_lines(after_src)]
     changed = []
     for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(
             a=b_lines, b=a_lines, autojunk=False).get_opcodes():
@@ -579,7 +592,7 @@ def analyze_file(entry, before_src, after_src, extract, lang, out):
 
     if entry["status"] == "R":
         add("mechanical", "file renamed from %s" % entry["old"], 1)
-        if _norm(before_src.splitlines()) == _norm(after_src.splitlines()):
+        if _norm(_split_lines(before_src)) == _norm(_split_lines(after_src)):
             return
     # Same path label on both sides so qualnames join (repoindex ADR-006:
     # deterministic qualnames are the before/after key). Extracted once:
@@ -591,8 +604,8 @@ def analyze_file(entry, before_src, after_src, extract, lang, out):
         if kind:
             add("mechanical", kind, 1)
             return
-    b_lines = before_src.splitlines()
-    a_lines = after_src.splitlines()
+    b_lines = _split_lines(before_src)
+    a_lines = _split_lines(after_src)
     before = {_local(s.qualname): s for s in ef_b.symbols}
     after = {_local(s.qualname): s for s in ef_a.symbols}
 
@@ -744,7 +757,7 @@ def _md_sections(src):
     cur = {"key": _MD_PREAMBLE, "title": _MD_PREAMBLE, "line": 1,
            "body": [], "code": []}
     fence = None
-    for i, line in enumerate(src.splitlines(), 1):
+    for i, line in enumerate(_split_lines(src), 1):
         m = _MD_FENCE_RE.match(line)
         if m:
             marker = m.group(1)[0]
@@ -1201,8 +1214,8 @@ def main(argv=None):
                           else _content(before_rev, before_path, root))
             after_src = ("" if entry["status"] == "D"
                          else _content(after_rev, entry["path"], root))
-            sizes[entry["path"]] = (len(after_src.splitlines())
-                                    or len(before_src.splitlines()))
+            sizes[entry["path"]] = (len(_split_lines(after_src))
+                                    or len(_split_lines(before_src)))
             lang = detect_language(entry["path"]) or \
                 detect_language(before_path)
             if "\0" in before_src or "\0" in after_src:
