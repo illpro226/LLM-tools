@@ -1,5 +1,26 @@
 # codediff Changelog
 
+- 2026-10-09: v0.6.0 — fixes for four known issues from the 2026-10-08
+  review, each pinned by a test that fails on v0.5.0.
+  **An endpoint swap read as a comment edit.** The JS/TS/Go "comment-only"
+  check stripped `//` to end of line with a regex that knew nothing about
+  strings, so `"https://api.prod…"` → `"https://evil…"` compared equal and
+  was filed under Mechanical with no flag. Comments are now stripped by a
+  scanner that keeps string, template and regex literals verbatim.
+  **A change outside every symbol produced no entry.** repoindex does not
+  extract a plain `export const URL = "…"` or a top-level statement, so the
+  header counted the file and no section named it. Such a change now
+  reports `~ module-level code changed` at its first line (blank, comment
+  and import lines aside).
+  **Untracked paths with spaces went unanalyzed**, read as `"my file.py"`
+  with the quotes; `git diff --name-status` and `git status` now run with
+  `-z`. **A rename made the unanalyzed share ~50× too small**: numstat rows
+  were keyed `old => new`, matched nothing, and the whole renamed file was
+  counted as changed. numstat runs with `-z` too, and whole-file sizes
+  stand in for untracked files only.
+  **`risk = 5` in `.codediff.toml` and a damaged index raised
+  tracebacks**; they are now an exit-2 error and a note respectively.
+  14 new tests (69 total).
 - 2026-09-24: v0.5.0 — fixes from a suite review, each pinned by a test
   that fails on v0.4.0.
   **A body edit was reported as a changed default.** Python signatures were

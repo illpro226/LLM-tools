@@ -45,7 +45,7 @@ try:
 except ImportError:  # pragma: no cover - Python < 3.11
     tomllib = None
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 # ADR-007: the token cap is on by default. A pre-commit summary is read
 # while the context already holds the work that produced the diff, so it
@@ -222,31 +222,38 @@ def resolve_target(target, staged):
 def changed_files(before_rev, after_rev):
     """[{status, path, old}] from name-status with rename detection on
     (unlike gitbrief: a rename IS the semantic fact here)."""
-    if after_rev == ":0":
-        out = _git("diff", "--name-status", "-M", "--cached", before_rev)
-    elif after_rev:
-        out = _git("diff", "--name-status", "-M", before_rev, after_rev)
-    else:
-        out = _git("diff", "--name-status", "-M", before_rev)
+    # -z everywhere: without it git C-quotes a path holding a tab, quote or
+    # backslash (and status quotes spaces too), and the quotes became part
+    # of the path, so the file could be neither read nor language-detected.
+    out = _git("diff", "--name-status", "-z", "-M", *_rev_args(before_rev,
+                                                              after_rev))
     entries = []
-    for line in out.splitlines():
-        parts = line.split("\t")
-        code = parts[0][:1]
-        if code == "R":
-            entries.append({"status": "R", "path": parts[2],
-                            "old": parts[1]})
-        elif code in ("A", "M", "D", "T", "C"):
-            entries.append({"status": "M" if code in ("T", "C") else code,
-                            "path": parts[1], "old": None})
+    toks = out.split("\0")
+    i = 0
+    while i < len(toks) and toks[i]:
+        code = toks[i][:1]
+        if code in ("R", "C"):
+            old, new = toks[i + 1], toks[i + 2]
+            i += 3
+            if code == "R":
+                entries.append({"status": "R", "path": new, "old": old})
+            else:
+                entries.append({"status": "A", "path": new, "old": None})
+            continue
+        path = toks[i + 1]
+        i += 2
+        if code in ("A", "M", "D", "T"):
+            entries.append({"status": "M" if code == "T" else code,
+                            "path": path, "old": None})
     if after_rev is None:  # working tree: untracked files are additions
-        out = _git("status", "--porcelain=v1", "-uall", "--no-renames")
-        for line in out.splitlines():
+        out = _git("status", "--porcelain=v1", "-z", "-uall", "--no-renames")
+        for rec in out.split("\0"):
             # the index db mutates on every implicit update; listing it
             # would make back-to-back runs disagree
-            if line.startswith("?? ") and not line[3:].startswith(
+            if rec.startswith("?? ") and not rec[3:].startswith(
                     ".repoindex/"):
-                entries.append({"status": "A", "path": line[3:],
-                                "old": None})
+                entries.append({"status": "A", "path": rec[3:],
+                                "old": None, "untracked": True})
     entries.sort(key=lambda e: e["path"])
     return entries
 
@@ -441,11 +448,92 @@ def _mechanical_kind(before_src, after_src, ef_b, ef_a, lang):
         except SyntaxError:
             return None
         return None
-    strip = lambda src: re.sub(r"\s+", "", re.sub(
-        r"//[^\n]*|/\*.*?\*/", "", src, flags=re.S))
-    if strip(before_src) == strip(after_src):
+    if _code_skeleton(before_src, lang) == _code_skeleton(after_src, lang):
         return "formatting/comment-only"
     return None
+
+
+# A `/` after one of these (or at the start) opens a JS regex literal, not a
+# division: the classic heuristic, good enough because a miss only keeps text.
+_REGEX_PRECEDERS = set("(,=:[!&|?{};+-*%<>~^")
+_REGEX_KEYWORDS = ("return", "typeof", "case", "do", "else", "in", "of",
+                   "new", "delete", "void", "throw", "yield", "await")
+
+
+def _code_skeleton(src, lang):
+    """`src` without comments or whitespace, literals kept verbatim.
+
+    One pass that knows where strings, template literals and regex literals
+    end, so a `//` inside `"https://..."` is text and not a comment. A regex
+    that stripped comments without knowing that ate everything after the
+    `//`, and a changed URL read as a comment-only edit.
+    """
+    out = []
+    i, n = 0, len(src)
+    js = lang in ("javascript", "typescript")
+    last = ""  # previous token: a word, one punctuation char, or '"'
+    word_open = False  # is `last` a word that the next word char extends?
+    while i < n:
+        ch = src[i]
+        if ch.isspace():
+            i += 1
+            word_open = False
+            continue
+        nxt = src[i + 1] if i + 1 < n else ""
+        if ch == "/" and nxt == "/":
+            end = src.find("\n", i)
+            i = n if end == -1 else end
+            continue
+        if ch == "/" and nxt == "*":
+            end = src.find("*/", i + 2)
+            i = n if end == -1 else end + 2
+            continue
+        if ch in "'\"`" or (js and ch == "/" and _regex_can_start(last)):
+            j = _literal_end(src, i, escapes=not (ch == "`" and lang == "go"))
+            out.append(src[i:j])
+            last, word_open = '"', False
+            i = j
+            continue
+        out.append(ch)
+        is_word = ch.isalnum() or ch in "_$"
+        last = last + ch if is_word and word_open else ch
+        word_open = is_word
+        i += 1
+    return "".join(out)
+
+
+def _regex_can_start(last):
+    return not last or last in _REGEX_PRECEDERS or last in _REGEX_KEYWORDS
+
+
+def _literal_end(src, i, escapes=True):
+    """Index just past the literal opening at src[i].
+
+    Quotes and regexes stop at a newline (unterminated: the rest of the
+    line is kept as text, which can only make a change look less
+    mechanical); backticks span lines. Inside a regex, `/` in a `[...]`
+    class does not close it.
+    """
+    quote, j, n = src[i], i + 1, len(src)
+    in_class = False
+    while j < n:
+        c = src[j]
+        if c == "\\" and escapes:
+            j += 2
+            continue
+        if c == "\n" and quote != "`":
+            return j
+        if quote == "/":
+            if c == "[":
+                in_class = True
+            elif c == "]":
+                in_class = False
+            elif c == "/" and not in_class:
+                return j + 1
+        elif c == quote:
+            return j + 1
+        j += 1
+    return n
 
 
 def _is_test_symbol(name, sym):
@@ -596,6 +684,48 @@ def analyze_file(entry, before_src, after_src, extract, lang, out):
                                       ", ".join(details) if details
                                       else "body changed"), line)
 
+    line = _module_level_change(b_lines, a_lines, ef_b, ef_a, lang)
+    if line:
+        add("behavior", "~ module-level code changed", line)
+
+
+_COMMENT_START = ("#", "//", "/*", "*")
+
+
+def _module_level_change(b_lines, a_lines, ef_b, ef_a, lang):
+    """First after-side line of a code change outside every symbol, or None.
+
+    Symbols are what repoindex extracts, and a plain `export const URL =
+    "..."` or a top-level statement is not one. Without this check such a
+    change produced no entry at all, while the header still counted the
+    file. Blank, comment and import lines are left out: the first two are
+    not behavior, and imports are reported with the code that uses them.
+    """
+    def spans(ef):
+        return [(s.line_start, s.line_end) for s in ef.symbols]
+
+    def outside(lines, lo, hi, sp):
+        imp_re = _IMPORT_LINE.get(lang)
+        for n in range(lo + 1, hi + 1):
+            text = lines[n - 1].strip()
+            if (not text or text.startswith(_COMMENT_START)
+                    or (imp_re and imp_re.match(text))):
+                continue
+            if not any(a <= n <= b for a, b in sp):
+                return True
+        return False
+
+    sp_b, sp_a = spans(ef_b), spans(ef_a)
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(
+            a=[l.strip() for l in b_lines], b=[l.strip() for l in a_lines],
+            autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        if (outside(a_lines, j1, j2, sp_a)
+                or outside(b_lines, i1, i2, sp_b)):
+            return max(1, min(j1 + 1, len(a_lines)))
+    return None
+
 
 def _is_markdown(path):
     return path.lower().endswith(_MD_EXTS)
@@ -705,22 +835,38 @@ def _changed_line_counts(before_rev, after_rev):
     share a summary reports about itself matches what any other tool
     would say about the same commit. Binary files (`-\\t-`) are omitted.
     """
-    if after_rev == ":0":
-        out = _git("diff", "--numstat", "-M", "--cached", before_rev)
-    elif after_rev:
-        out = _git("diff", "--numstat", "-M", before_rev, after_rev)
-    else:
-        out = _git("diff", "--numstat", "-M", before_rev)
+    out = _git("diff", "--numstat", "-z", "-M", *_rev_args(before_rev,
+                                                           after_rev))
+    # With -z a rename row is `added\tdeleted\t` then old\0new\0, so it is
+    # keyed by the new path. Without it the path field was
+    # `old => new`, which matched no entry.
     counts = {}
-    for line in out.splitlines():
-        parts = line.split("\t")
+    toks = out.split("\0")
+    i = 0
+    while i < len(toks) and toks[i]:
+        parts = toks[i].split("\t")
+        i += 1
+        if len(parts) == 3 and parts[2] == "":
+            path = toks[i + 1]
+            i += 2
+        else:
+            path = parts[-1]
         if len(parts) < 3 or parts[0] == "-":
             continue
         try:
-            counts[parts[-1]] = int(parts[0]) + int(parts[1])
+            counts[path] = int(parts[0]) + int(parts[1])
         except ValueError:
             continue
     return counts
+
+
+def _rev_args(before_rev, after_rev):
+    """The revision arguments of `git diff` for one target."""
+    if after_rev == ":0":
+        return ["--cached", before_rev]
+    if after_rev:
+        return [before_rev, after_rev]
+    return [before_rev]
 
 
 def _unanalyzed_note(unanalyzed, entries, counts, max_names=None):
@@ -775,6 +921,8 @@ def load_config(root):
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise CodediffError("%s: %s" % (CONFIG_NAME, exc))
     risk = data.get("risk", {})
+    if not isinstance(risk, dict):
+        raise CodediffError("%s: [risk] must be a table" % CONFIG_NAME)
     if isinstance(risk.get("keywords"), list):
         cfg["keywords"] = [str(k).lower() for k in risk["keywords"]]
     if isinstance(risk.get("large_delta"), int):
@@ -870,31 +1018,38 @@ def risk_flags(out, entries, root, cfg, no_update, repoindex_cmd):
             # an empty db beside the repo — then "no such table" escaped
             # as a traceback.
             uri = "file:%s?mode=ro" % quote(db_path.replace(os.sep, "/"))
-            conn = sqlite3.connect(uri, uri=True)
+            stale, uncovered = [], []
             try:
-                stale, uncovered = [], []
-                for src in source_changed:
-                    rows = conn.execute(
-                        "SELECT DISTINCT test_file FROM tests "
-                        "WHERE target_file = ? ORDER BY test_file",
-                        (src,)).fetchall()
-                    covering = {r[0] for r in rows}
-                    if not covering:
-                        uncovered.append(src)
-                    elif not covering & tests_changed:
-                        stale.append(src)
-                if stale:
-                    flags.append({"text": "matching tests not changed "
-                                  "(%d file%s)" % (len(stale),
-                                  "" if len(stale) == 1 else "s"),
-                                  "path": stale[0], "line": 1})
-                if uncovered:
-                    flags.append({"text": "no known tests cover %d changed "
-                                  "file%s" % (len(uncovered),
-                                  "" if len(uncovered) == 1 else "s"),
-                                  "path": uncovered[0], "line": 1})
-            finally:
-                conn.close()
+                conn = sqlite3.connect(uri, uri=True)
+                try:
+                    for src in source_changed:
+                        rows = conn.execute(
+                            "SELECT DISTINCT test_file FROM tests "
+                            "WHERE target_file = ? ORDER BY test_file",
+                            (src,)).fetchall()
+                        covering = {r[0] for r in rows}
+                        if not covering:
+                            uncovered.append(src)
+                        elif not covering & tests_changed:
+                            stale.append(src)
+                finally:
+                    conn.close()
+            except sqlite3.Error as exc:
+                # An older or damaged index is a missing feature, not a
+                # crash: same treatment as no index at all.
+                notes.append("note: test-coverage flags unavailable "
+                             "(%s: %s)" % (DB_RELPATH, exc))
+                return flags, notes
+            if stale:
+                flags.append({"text": "matching tests not changed "
+                              "(%d file%s)" % (len(stale),
+                              "" if len(stale) == 1 else "s"),
+                              "path": stale[0], "line": 1})
+            if uncovered:
+                flags.append({"text": "no known tests cover %d changed "
+                              "file%s" % (len(uncovered),
+                              "" if len(uncovered) == 1 else "s"),
+                              "path": uncovered[0], "line": 1})
         else:
             notes.append("note: no .repoindex index; test-coverage flags "
                          "unavailable (run `repoindex build`)")
@@ -1065,8 +1220,9 @@ def main(argv=None):
             out[sec].sort(key=lambda e: (e["path"], e["line"], e["text"]))
 
         counts = _changed_line_counts(before_rev, after_rev)
-        for path, n in sizes.items():
-            counts.setdefault(path, n)
+        for entry in entries:
+            if entry.get("untracked") and entry["path"] in sizes:
+                counts.setdefault(entry["path"], sizes[entry["path"]])
         cfg = load_config(root)
         flags, notes = risk_flags(out, entries, root, cfg,
                                   args.no_update, args.repoindex)

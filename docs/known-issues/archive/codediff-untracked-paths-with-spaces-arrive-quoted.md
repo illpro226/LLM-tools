@@ -1,6 +1,8 @@
 # codediff: untracked paths with spaces arrive quoted and go unanalyzed
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session.
+**RESOLVED 2026-10-09 (codediff v0.6.0).** `status` and `diff --name-status` run with `-z`.
+
+Filed 2026-10-08 from a full-suite review session.
 
 ## What broke
 

@@ -1,6 +1,8 @@
 # codediff reports JS string changes after `//` as formatting/comment-only
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session.
+**RESOLVED 2026-10-09 (codediff v0.6.0).** Comments are stripped by a literal-aware scanner (`_code_skeleton`), and a change outside every symbol now reports `~ module-level code changed` — with only the scanner fix, the URL change showed in no section at all.
+
+Filed 2026-10-08 from a full-suite review session.
 
 ## What broke
 

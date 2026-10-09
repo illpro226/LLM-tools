@@ -1,6 +1,8 @@
 # codediff: a mis-shaped .codediff.toml tracebacks
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session. Minor.
+**RESOLVED 2026-10-09 (codediff v0.6.0).** A non-table `risk` is an exit-2 error; `sqlite3.Error` in `risk_flags` becomes a note.
+
+Filed 2026-10-08 from a full-suite review session. Minor.
 
 ## What broke
 

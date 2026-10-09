@@ -173,6 +173,41 @@ def test_mechanical_formatting_one_line(repo):
     assert "formatting/comment-only" in fmt_lines[0]
 
 
+def test_js_url_change_is_not_comment_only(tmp_path):
+    """A `//` inside a string is text: an endpoint swap is not mechanical."""
+    from conftest import base_repo
+    work = base_repo(tmp_path)
+    write(work, "src/api.js",
+          'export const API = "https://api.prod.example.com/v1";\n')
+    g(work, "add", "-A")
+    g(work, "commit", "-m", "api")
+    write(work, "src/api.js",
+          'export const API = "https://evil.example.net/v1";\n')
+    out = run(work).stdout
+    assert "formatting/comment-only" not in out, out
+    assert "src/api.js" in out
+
+
+@pytest.mark.parametrize("lang,before,after,mechanical", [
+    ("javascript", 'const u = "https://a/x";\n', 'const u = "https://b/x";\n',
+     False),
+    ("javascript", "const u = 'a /* b';\n", "const u = 'a /* c';\n", False),
+    ("javascript", "const t = `x\n// y`;\n", "const t = `x\n// z`;\n", False),
+    ("javascript", "const r = /\\/*x/;\n", "const r = /\\/*y/;\n", False),
+    ("javascript", "const r = /[/]a/;\n", "const r = /[/]b/;\n", False),
+    ("javascript", "const s = 'a b';\n", "const s = 'a  b';\n", False),
+    ("go", "var p = `C:\\`\n// old\n", "var p = `C:\\`\n// new\n", True),
+    ("javascript", "f(1); // old\n/* a */\n", "f( 1 );  // new\n/* b */\n",
+     True),
+    ("javascript", "const half = a / 2; // x\n",
+     "const half = a / 2; // y\n", True),
+])
+def test_code_skeleton_keeps_literals(lang, before, after, mechanical):
+    same = (codediff._code_skeleton(before, lang)
+            == codediff._code_skeleton(after, lang))
+    assert same is mechanical
+
+
 def test_mechanical_imports_reshuffled(repo):
     out = run(repo).stdout
     app_lines = [l for l in out.splitlines() if "src/app.py" in l]
@@ -569,3 +604,55 @@ def test_index_under_a_hash_path_is_read_only(tmp_path):
     assert proc.returncode == 0, proc.stderr
     assert "no known tests cover 1 changed file" in proc.stdout
     assert sorted(os.listdir(tmp_path)) == ["C#proj"]
+
+
+# ------------------------------------------------ v0.6.0 review fixes
+
+def _tiny_repo(tmp_path, files):
+    work = tmp_path / "w"
+    work.mkdir()
+    g(work, "init", "-b", "main")
+    for rel, text in files.items():
+        write(work, rel, text)
+    g(work, "add", "-A")
+    g(work, "commit", "-m", "base")
+    return work
+
+
+def test_untracked_path_with_space_is_analyzed(tmp_path):
+    work = _tiny_repo(tmp_path, {"a.py": "x = 1\n"})
+    write(work, "my file.py", "def hello():\n    return 1\n")
+    doc = run_json(work)
+    assert doc["unanalyzed"] == []
+    assert any("hello" in e["text"] and e["path"] == "my file.py"
+               for sec in ("api", "behavior") for e in doc[sec]), doc
+
+
+def test_rename_counts_its_own_lines_in_the_share(tmp_path):
+    body = "".join("def f%d():\n    return %d\n\n\n" % (n, n)
+                   for n in range(38))
+    work = _tiny_repo(tmp_path, {"mod.py": body, "notes.txt": "a\n"})
+    g(work, "mv", "mod.py", "mod2.py")
+    write(work, "mod2.py", body + "def extra():\n    return 0\n")
+    write(work, "notes.txt", "a\nb\nc\n")
+    g(work, "add", "-A")
+    share = run_json(work, "--staged")["unanalyzed_share"]
+    assert share["percent_of_changed_lines"] == 50, share
+
+
+@pytest.mark.skipif(not HAS_TOMLLIB, reason="tomllib requires Python 3.11+")
+def test_risk_not_a_table_is_an_error_not_a_traceback(repo):
+    write(repo, ".codediff.toml", "risk = 5\n")
+    proc = run(repo)
+    assert proc.returncode == 2
+    assert "[risk] must be a table" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
+def test_broken_index_is_a_note_not_a_traceback(repo):
+    os.makedirs(os.path.join(str(repo), ".repoindex"))
+    with open(os.path.join(str(repo), ".repoindex", "index.db"), "wb") as fh:
+        fh.write(b"not a database at all" * 10)
+    proc = run(repo, "--no-update")
+    assert proc.returncode == 0, proc.stderr
+    assert "test-coverage flags unavailable" in proc.stdout

@@ -1,6 +1,8 @@
 # codediff's "not analyzed" share is wrong when the change includes a rename
 
-**STATUS: open.** Filed 2026-10-08 from a full-suite review session.
+**RESOLVED 2026-10-09 (codediff v0.6.0).** numstat runs with `-z` and keys renames by the new path; whole-file sizes stand in for untracked files only.
+
+Filed 2026-10-08 from a full-suite review session.
 
 ## What broke
 
