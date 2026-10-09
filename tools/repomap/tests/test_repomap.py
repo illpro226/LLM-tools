@@ -465,12 +465,17 @@ def test_fixtures_rank_below_the_code_they_test(tmp_path, capsys):
     assert any(l.endswith(", fixtures]") for l in out.splitlines())
 
 
-def test_over_budget_tree_folds_fixture_dirs_and_says_so(tmp_path, capsys):
+def test_over_budget_tree_folds_fixture_dirs_and_says_so(tmp_path, capsys,
+                                                         monkeypatch):
     files = {"tests/fixtures/f%02d.py" % i: "def f%d():\n    pass\n" % i
              for i in range(40)}
     files["pkg/core.py"] = "def core():\n    pass\n"
     root = _mini(tmp_path, files)
-    out = run([root, "--max-tokens", "150"], capsys)[1]
+    # Relative root: every outline line repeats the root path, so at this
+    # budget the temp dir's length picked the rung (passed on Windows,
+    # failed on Linux's shorter /tmp path).
+    monkeypatch.chdir(root)
+    out = run([".", "--max-tokens", "150"], capsys)[1]
     assert "fixtures/ … (40 files)" in out
     assert "(fixture directories folded for --max-tokens 150)" in out
 

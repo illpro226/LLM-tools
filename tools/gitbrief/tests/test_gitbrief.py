@@ -488,7 +488,10 @@ def test_hunks_reports_binary_and_header_only_changes(tmp_path, monkeypatch,
     (work / "logo.bin").write_bytes(b"\0\1\2")
     (work / "empty.txt").write_text("")
     g(work, "add", "logo.bin", "empty.txt")
+    # Both: Windows (core.filemode=false) reads the mode from the index,
+    # Linux from the file, and `hunks` diffs HEAD against the work tree.
     g(work, "update-index", "--chmod=+x", "a.txt")
+    os.chmod(str(work / "a.txt"), 0o755)
     monkeypatch.chdir(work)
     out = ok(["hunks"], capsys)
     assert "no changes" not in out
